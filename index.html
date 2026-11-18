@@ -1533,7 +1533,7 @@ function quickPanel(cls, tab) {
         cands.map(s => h('button', { type: 'button', class: 'small chip', onclick: () => { stSel.value = s.id; stSel.dispatchEvent(new Event('change')); } },
           s.name + (used(s.id) ? ' (hat schon)' : ''))));
       if (r.kind === 'grade') what.addEventListener('input', () => { upd(true); quickMark(); });
-      chk.addEventListener('change', () => { r.on = chk.checked; quickMark(); });
+      chk.addEventListener('change', () => { r.on = chk.checked; r.onSet = true; quickMark(); });
       upd(!('on' in r));
       return h('div', { class: 'qrow' }, chk, stSel, what, chips,
         h('span', { class: 'qinfo' }, h('b', {}, col ? col.name : '?'), r.src ? ' · „' + r.src + '“' : '', info));
@@ -1545,6 +1545,15 @@ function quickPanel(cls, tab) {
     const { c, t } = L();
     const p = parseQuick(ta.value, c, t, colSel.value);
     if (p.colId !== colSel.value) colSel.value = QE.colId = p.colId;
+    // Von Hand gewählte Schüler und Haken bleiben beim Weitersprechen erhalten (gleiche Stelle, gleiches gehörtes Wort).
+    const prev = QE.rows.filter(r => (r.manual && r.sid) || r.onSet);
+    for (const r of p.rows) {
+      const k = prev.findIndex(x => x.kind === r.kind && x.src && x.src === r.src && x.colId === r.colId);
+      if (k < 0) continue;
+      const x = prev.splice(k, 1)[0];
+      if (x.manual && x.sid) { r.sid = x.sid; r.manual = true; }
+      if (x.onSet) { r.on = x.on; r.onSet = true; }
+    }
     QE.rows = p.rows; answer.hidden = true; draw();
   };
   const later = () => { clearTimeout(QE.tmr); QE.tmr = setTimeout(() => { if (QE) parse(); }, 250); };
@@ -2305,31 +2314,48 @@ function scanForget(names) {
   try { localStorage.setItem(SCAN_DEL_KEY, JSON.stringify((readJson(SCAN_DEL_KEY) || []).concat(names))); } catch (e) {}
   scanStore('readwrite', s => { names.forEach(n => s.delete(n)); }).catch(() => {}).then(() => scanSync());
 }
+/* Größe der abgelegten Seiten: längste Seite 1800 Bildpunkte (A4 gut lesbar), JPEG-Qualität 0,6.
+   Durch das weiße Papier nach scanClean bleiben die Dateien klein (meist 100–250 KB je Seite). */
+const SCAN_MAX = 1800, SCAN_Q = 0.6;
 async function scanJpeg(cv) {
-  const blob = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.8));
+  const blob = await new Promise(res => cv.toBlob(res, 'image/jpeg', SCAN_Q));
   if (!blob) throw new Error('Das Bild konnte nicht verkleinert werden.');
   return blob.arrayBuffer();
 }
-/* Wie ein Scanner: Papier wird weiß, Schrift kräftiger. Farben (z. B. Rotstift) bleiben erhalten. */
+/* Wie ein Scanner: Zuerst wird an jeder Stelle geschätzt, wie hell das Papier dort ist (Schatten,
+   ungleiches Licht, Farbstich). Jeder Bildpunkt wird daran gemessen – so wird das Papier überall
+   gleichmäßig weiß. Danach Schrift kräftiger; Graues/Schwarzes wird reines Grau, Farbiges (Rotstift) bleibt farbig. */
 function scanClean(cv) {
-  const ctx = cv.getContext('2d'), im = ctx.getImageData(0, 0, cv.width, cv.height), d = im.data, n = d.length / 4;
-  const hist = new Uint32Array(256);
-  for (let i = 0; i < d.length; i += 4) hist[(d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8]++;
-  let lo = 0, hi = 255, acc = 0;
-  while (lo < 254 && (acc += hist[lo]) < n * 0.01) lo++;
-  acc = 0;
-  while (hi > 1 && (acc += hist[hi]) < n * 0.15) hi--;   // das hellste Sechstel gilt als Papier
-  if (hi < 60) return;                       // sehr dunkles Bild: lieber unverändert lassen
-  lo = Math.max(0, Math.min(lo, hi - 110));  // Papier fast einfarbig: Schrift trotzdem dunkel halten
-  // Farbstich des Papiers ausgleichen (z. B. gelbes Licht), dann Papier → weiß
-  const sum = [0, 0, 0]; let cnt = 0;
-  for (let i = 0; i < d.length; i += 4) if (((d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8) >= hi) { sum[0] += d[i]; sum[1] += d[i + 1]; sum[2] += d[i + 2]; cnt++; }
-  const luts = sum.map(s => {
-    const paper = cnt ? Math.max(1, s / cnt) : hi, k = hi / paper, lut = new Uint8ClampedArray(256);
-    for (let v = 0; v < 256; v++) lut[v] = Math.pow(Math.max(0, v * k - lo) / (hi - lo), 1.15) * 255;
-    return lut;
-  });
-  for (let i = 0; i < d.length; i += 4) { d[i] = luts[0][d[i]]; d[i + 1] = luts[1][d[i + 1]]; d[i + 2] = luts[2][d[i + 2]]; }
+  const W = cv.width, H = cv.height, ctx = cv.getContext('2d');
+  const sw = Math.max(8, Math.round(W / 24)), sh = Math.max(8, Math.round(H / 24));
+  const sm = document.createElement('canvas'); sm.width = sw; sm.height = sh;
+  const sx = sm.getContext('2d'); sx.imageSmoothingQuality = 'high'; sx.drawImage(cv, 0, 0, sw, sh);
+  const si = sx.getImageData(0, 0, sw, sh);
+  let a = si.data;
+  for (let pass = 0; pass < 3; pass++) {   // hellster Nachbar: Schrift verschwindet, Papier bleibt
+    const b = new Uint8ClampedArray(a.length);
+    for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+      let best = -1, j0 = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const j = (Math.min(sh - 1, Math.max(0, y + dy)) * sw + Math.min(sw - 1, Math.max(0, x + dx))) * 4, v = a[j] + a[j + 1] + a[j + 2];
+        if (v > best) { best = v; j0 = j; }
+      }
+      const o = (y * sw + x) * 4; b[o] = a[j0]; b[o + 1] = a[j0 + 1]; b[o + 2] = a[j0 + 2]; b[o + 3] = 255;
+    }
+    a = b;
+  }
+  si.data.set(a); sx.putImageData(si, 0, 0);
+  const bg = document.createElement('canvas'); bg.width = W; bg.height = H;
+  const bx = bg.getContext('2d'); bx.imageSmoothingEnabled = true; bx.imageSmoothingQuality = 'high'; bx.drawImage(sm, 0, 0, W, H);
+  const B = bx.getImageData(0, 0, W, H).data, im = ctx.getImageData(0, 0, W, H), d = im.data;
+  const lut = new Uint8ClampedArray(256);
+  for (let v = 0; v < 256; v++) lut[v] = Math.pow(Math.min(1, Math.max(0, (v - 45) / (222 - 45))), 1.35) * 255;
+  for (let i = 0; i < d.length; i += 4) {
+    const r = Math.min(255, d[i] * 255 / Math.max(24, B[i])), g = Math.min(255, d[i + 1] * 255 / Math.max(24, B[i + 1])), bl = Math.min(255, d[i + 2] * 255 / Math.max(24, B[i + 2]));
+    const mx = Math.max(r, g, bl), mn = Math.min(r, g, bl);
+    if (mx < 1 || (mx - mn) / mx < 0.28) { const L = lut[(r * 77 + g * 150 + bl * 29) >> 8]; d[i] = d[i + 1] = d[i + 2] = L; }
+    else { d[i] = lut[r | 0]; d[i + 1] = lut[g | 0]; d[i + 2] = lut[bl | 0]; }
+  }
   ctx.putImageData(im, 0, 0);
 }
 async function scanShrink(file) {
@@ -2337,7 +2363,7 @@ async function scanShrink(file) {
   try {
     const img = new Image();
     await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('Das Bild konnte nicht gelesen werden.')); img.src = url; });
-    const k = Math.min(1, 2000 / Math.max(img.naturalWidth, img.naturalHeight));
+    const k = Math.min(1, SCAN_MAX / Math.max(img.naturalWidth, img.naturalHeight));
     const cv = document.createElement('canvas');
     cv.width = Math.round(img.naturalWidth * k); cv.height = Math.round(img.naturalHeight * k);
     cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
@@ -2356,7 +2382,7 @@ async function scanPdf(file) {
   const out = [];
   for (let i = 1; i <= doc.numPages; i++) {
     const pg = await doc.getPage(i), v1 = pg.getViewport({ scale: 1 });
-    const vp = pg.getViewport({ scale: Math.min(4, 2000 / Math.max(v1.width, v1.height)) });
+    const vp = pg.getViewport({ scale: Math.min(4, SCAN_MAX / Math.max(v1.width, v1.height)) });
     const cv = document.createElement('canvas');
     cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
     const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
@@ -2444,7 +2470,7 @@ function quadOf(cv) {   // im verkleinerten Bild suchen, in Bildpunkte des Origi
 function warpQuad(src, q) {
   const dist = (p, r) => Math.hypot(p[0] - r[0], p[1] - r[1]);
   let w = Math.max(dist(q[0], q[1]), dist(q[3], q[2])), hh = Math.max(dist(q[0], q[3]), dist(q[1], q[2]));
-  const k = Math.min(1, 2000 / Math.max(w, hh)); w = Math.max(1, Math.round(w * k)); hh = Math.max(1, Math.round(hh * k));
+  const k = Math.min(1, SCAN_MAX / Math.max(w, hh)); w = Math.max(1, Math.round(w * k)); hh = Math.max(1, Math.round(hh * k));
   const sw = src.width, sh = src.height, sd = src.getContext('2d').getImageData(0, 0, sw, sh).data;
   const out = document.createElement('canvas'); out.width = w; out.height = hh;
   const ox = out.getContext('2d'), od = ox.createImageData(w, hh), o = od.data;
