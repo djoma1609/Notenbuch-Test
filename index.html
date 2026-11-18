@@ -200,6 +200,20 @@ button.scn.on { background: var(--soft); border: 1.5px solid var(--accent); colo
 .scanimg img, .scanimg canvas { display: block; width: 100%; cursor: zoom-in; }
 .scanpg.zoom .scanimg img, .scanpg.zoom .scanimg canvas { width: 250%; max-width: none; cursor: zoom-out; }
 .scanhead .grow { flex: 1; }
+dialog.scanner { width: 100vw; height: 100vh; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 0; border: none; border-radius: 0; background: #111; color: #fff; }
+dialog.scanner[open] { display: flex; flex-direction: column; }
+dialog.scanner::backdrop { background: #111; }
+.sc-top, .sc-bot { display: flex; align-items: center; gap: 10px; padding: 10px 12px; flex: none; }
+.sc-top { padding-top: calc(10px + env(safe-area-inset-top)); }
+.sc-top select { flex: 1; min-width: 0; }
+.sc-bot { flex-wrap: wrap; justify-content: center; padding-bottom: calc(14px + env(safe-area-inset-bottom)); }
+.sc-view { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; }
+.sc-view video, .sc-view .sc-still { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.sc-over { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.sc-h { position: absolute; width: 36px; height: 36px; margin: -18px 0 0 -18px; border-radius: 50%; border: 3px solid #fff; background: rgba(62, 211, 154, .45); touch-action: none; }
+.sc-shot { width: 70px; height: 70px; padding: 0; border-radius: 50%; border: 4px solid #fff; background: #fff; box-shadow: inset 0 0 0 3px #111; }
+.sc-bot button:not(.primary):not(.sc-shot) { background: rgba(255, 255, 255, .16); border-color: rgba(255, 255, 255, .35); color: #fff; }
+.sc-info { flex: 1 1 100%; text-align: center; font-size: 13.5px; opacity: .85; min-height: 1.2em; }
 .scanpg .hint { margin: 0; padding: 8px 12px; }
 td.cell .sigts { color: var(--good); min-height: 0; margin-top: 0; }
 td.cell .sigts:empty { display: none; }
@@ -1157,7 +1171,34 @@ function wordMatch(w, part) {
   if (w === part) return 3;
   if (w.length >= 4 && part.length >= 4 && (part.startsWith(w) || w.startsWith(part))) return 2;
   if (part.length >= 5 && lev(w, part) <= 1) return 1;
+  if (w.length >= 3 && part.length >= 3) { const a = koeln(w); if (a.length >= 2 && a === koeln(part)) return 1; }   // klingt gleich: „Maier“ = „Meyer“
   return 0;
+}
+/* Kölner Phonetik: ähnlich klingende Namen bekommen denselben Code. */
+function koeln(s) {
+  s = fold(s).replace(/[^a-z]/g, '');
+  let out = '', prev = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i], p = s[i - 1] || '', n = s[i + 1] || '';
+    let k;
+    if ('aeijouy'.includes(c)) k = '0';
+    else if (c === 'h') continue;
+    else if (c === 'b') k = '1';
+    else if (c === 'p') k = n === 'h' ? '3' : '1';
+    else if (c === 'd' || c === 't') k = 'csz'.includes(n) ? '8' : '2';
+    else if ('fvw'.includes(c)) k = '3';
+    else if ('gkq'.includes(c)) k = '4';
+    else if (c === 'c') k = i === 0 ? ('ahkloqrux'.includes(n) ? '4' : '8') : ('sz'.includes(p) ? '8' : 'ahkoqux'.includes(n) ? '4' : '8');
+    else if (c === 'x') k = 'ckq'.includes(p) ? '8' : '48';
+    else if (c === 'l') k = '5';
+    else if (c === 'm' || c === 'n') k = '6';
+    else if (c === 'r') k = '7';
+    else if (c === 's' || c === 'z') k = '8';
+    else continue;
+    if (k !== prev) out += k;
+    prev = k;
+  }
+  return out ? out[0] + out.slice(1).replace(/0/g, '') : '';
 }
 function matchStudents(words, students) {
   let best = 0, hits = [];
@@ -1212,7 +1253,11 @@ function parseQuick(text, cls, tab, colId) {
     if (kw) {
       const words = names();
       const nx = toks[i + 1], last = out[out.length - 1];
-      if (words.length) splitNames(words, cls.students).forEach(ws => push(kw, ws));          // „Lena Unterschrift“, „Lena und Emre scannen“
+      const allWords = ['alle', 'klasse', 'ganze', 'ganzen', 'stapel', 'arbeiten', 'nacheinander', 'reihe'];
+      if (kw === 'scan' && (words.length ? words.every(x => allWords.includes(x)) : (!last && (!nx || /^[,;:.!?]$/.test(nx)) || allWords.includes(nx)))) {
+        while (allWords.includes(toks[i + 1])) i++;
+        out.push({ kind: 'scan', all: true, sid: '', colId, g: '', src: 'alle', msg: '' });
+      } else if (words.length) splitNames(words, cls.students).forEach(ws => push(kw, ws));          // „Lena Unterschrift“, „Lena und Emre scannen“
       else if ((!nx || /^[,;:.!?]$/.test(nx)) && last && last.sid && !mode) out.push({ ...last, kind: kw, g: '' });   // „Lena 2, Unterschrift“
       else mode = kw;                                                                     // „Unterschrift: Lena, Emre, Mia“
       continue;
@@ -1382,11 +1427,13 @@ function quickPanel(cls, tab) {
       if (r.kind === 'grade') what = h('input', { type: 'text', class: 'grade', value: r.g, maxlength: 2, autocomplete: 'off', 'aria-label': 'Note' });
       else if (r.kind === 'sign') what = h('span', { class: 'qkind' }, '✓ Unterschrift');
       else {
-        what = h('button', { type: 'button', class: 'small' }, 'Scannen');
+        what = h('button', { type: 'button', class: 'small' }, r.all ? 'Stapel scannen' : 'Scannen');
         what.addEventListener('click', async () => {
-          const st = c.students.find(s => s.id === r.sid);
-          if (!st || !col || !col.scan) return;
-          await scanDialog(c, t, st, col, () => {});
+          if (!col || !col.scan) return;
+          const list = shownStudents(c);
+          const first = r.all ? (list.find(s => !scanPages(t, s.id, col.id).length) || list[0]) : c.students.find(s => s.id === r.sid);
+          if (!first) return;
+          await docScanner(c, t, col, first.id);
           r.done = true; render();
         });
       }
@@ -1394,6 +1441,7 @@ function quickPanel(cls, tab) {
         r.sid = stSel.value;
         if (r.kind === 'grade') r.g = normGrade(what.value);
         let ok = !!r.sid && !!col, old = null, same = false, text = '';
+        if (r.all) { stSel.hidden = true; ok = !!col && !!col.scan; text = !col ? 'Leistung fehlt' : !col.scan ? 'Scans sind bei dieser Leistung ausgeschaltet' : 'alle Schüler nacheinander'; what.disabled = !ok; chk.hidden = true; r.on = false; info.textContent = text; return; }
         if (!r.sid) text = r.msg;
         else if (!col) { ok = false; text = 'Leistung fehlt'; }
         else if (r.kind === 'grade') {
@@ -1445,7 +1493,17 @@ function quickPanel(cls, tab) {
       const base = ta.value ? ta.value.replace(/\s*$/, ', ') : '';
       try {
         rec = new SR(); rec.lang = 'de-DE'; rec.continuous = true; rec.interimResults = true;
-        rec.onresult = e => { let s = ''; for (const x of e.results) s += x[0].transcript; ta.value = base + s; later(); };
+        // Das iPhone liefert Teilergebnisse oft mehrfach („Lena 2“, „Lena 2 Emre“ …) – nur das Längste behalten.
+        rec.onresult = e => {
+          const parts = [];
+          for (const x of e.results) {
+            const s = x[0].transcript.trim(), last = parts[parts.length - 1];
+            if (!s) continue;
+            if (last && s.toLowerCase().startsWith(last.toLowerCase())) parts[parts.length - 1] = s;
+            else if (!last || !last.toLowerCase().startsWith(s.toLowerCase())) parts.push(s);
+          }
+          ta.value = base + parts.join(', '); later();
+        };
         rec.onerror = e => { msg.textContent = e.error === 'not-allowed' ? 'Mikrofon nicht freigegeben. Bitte erlauben oder die Mikrofon-Taste der Tastatur nutzen.' : 'Diktieren ist hier nicht möglich – bitte die Mikrofon-Taste der Tastatur nutzen.'; };
         rec.onend = () => { rec = null; mic.textContent = '🎤 Diktieren'; mic.classList.remove('rec'); if (msg.textContent === 'Ich höre zu …') msg.textContent = ''; };
         rec.start(); mic.textContent = '■ Stopp'; mic.classList.add('rec'); msg.textContent = 'Ich höre zu …';
@@ -1453,6 +1511,8 @@ function quickPanel(cls, tab) {
     });
     tools.append(mic);
   }
+  if (/iP(hone|ad|od)|Macintosh/.test(navigator.userAgent) && 'ontouchend' in document)
+    tools.append(h('span', { class: 'hint' }, 'Tipp: Die Mikrofon-Taste der Tastatur versteht oft besser. Kurze Sätze mit Pause je Schüler.'));
 
   // KI-Zusatz: nur auf diesem Gerät, standardmäßig aus.
   const conf = kiConf();
@@ -2208,14 +2268,208 @@ async function scanAdd(cls, tab, st, col, files) {
   // So bleibt alles richtig, wenn Klasse, Fach, Leistung oder Schüler umbenannt oder verschoben werden.
   for (const f of files) {
     const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '');
-    for (const buf of isPdf ? await scanPdf(f) : [await scanShrink(f)]) {
-      const id = uid(), name = 'scan-' + id + '.jpg';
-      await scanStore('readwrite', s => s.put(buf, name));   // erst sicher ablegen, dann eintragen
-      setCell(tab, st.id, col.id + ':d:' + id, name);
-      save();
-    }
+    for (const buf of isPdf ? await scanPdf(f) : [await scanShrink(f)]) await scanPut(tab, st.id, col.id, buf);
   }
   scanSync();
+}
+async function scanPut(tab, sid, colId, buf) {
+  const id = uid(), name = 'scan-' + id + '.jpg';
+  await scanStore('readwrite', s => s.put(buf, name));   // erst sicher ablegen, dann eintragen
+  setCell(tab, sid, colId + ':d:' + id, name);
+  save();
+}
+
+/* ---------- Scanner im Notenbuch ----------
+   Eine Webseite darf den Dokumentenscanner des iPhones nicht aufrufen. Darum hier ein eigener:
+   Kamerabild → Blattkanten finden (größte helle Fläche) → Ecken bei Bedarf verschieben →
+   Blatt gerade ziehen → aufhellen. Seiten und Schüler lassen sich nacheinander scannen. */
+function sq2quad(x0, y0, x1, y1, x2, y2, x3, y3) {   // Einheitsquadrat → Viereck (Ecken: oben links, oben rechts, unten rechts, unten links)
+  const dx1 = x1 - x2, dx2 = x3 - x2, dx3 = x0 - x1 + x2 - x3, dy1 = y1 - y2, dy2 = y3 - y2, dy3 = y0 - y1 + y2 - y3;
+  let a, b, d, e, g = 0, k = 0;
+  if (Math.abs(dx3) < 1e-9 && Math.abs(dy3) < 1e-9) { a = x1 - x0; b = x3 - x0; d = y1 - y0; e = y3 - y0; }
+  else {
+    const den = dx1 * dy2 - dx2 * dy1;
+    g = (dx3 * dy2 - dx2 * dy3) / den; k = (dx1 * dy3 - dx3 * dy1) / den;
+    a = x1 - x0 + g * x1; b = x3 - x0 + k * x3; d = y1 - y0 + g * y1; e = y3 - y0 + k * y3;
+  }
+  return (u, v) => { const w = g * u + k * v + 1; return [(a * u + b * v + x0) / w, (d * u + e * v + y0) / w]; };
+}
+/* Blatt im (kleinen) Bild finden: hell gegen dunkel trennen, größte helle Fläche, deren vier äußerste Ecken. */
+function paperQuad(img, W, H) {
+  const d = img.data, n = W * H, gr = new Uint8Array(n), hist = new Uint32Array(256);
+  for (let i = 0; i < n; i++) { const v = (d[i * 4] * 77 + d[i * 4 + 1] * 150 + d[i * 4 + 2] * 29) >> 8; gr[i] = v; hist[v]++; }
+  let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
+  let sB = 0, wB = 0, best = 0, thr = 128;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t]; if (!wB) continue;
+    const wF = n - wB; if (!wF) break;
+    sB += t * hist[t];
+    const v = wB * wF * (sB / wB - (sum - sB) / wF) ** 2;
+    if (v > best) { best = v; thr = t; }
+  }
+  const lab = new Int32Array(n), stack = [];
+  let id = 0, bestId = 0, bestSize = 0;
+  for (let s = 0; s < n; s++) {
+    if (lab[s] || gr[s] <= thr) continue;
+    id++; let size = 0; lab[s] = id; stack.push(s);
+    while (stack.length) {
+      const p = stack.pop(), x = p % W; size++;
+      for (const q of [x > 0 ? p - 1 : -1, x < W - 1 ? p + 1 : -1, p - W, p + W])
+        if (q >= 0 && q < n && !lab[q] && gr[q] > thr) { lab[q] = id; stack.push(q); }
+    }
+    if (size > bestSize) { bestSize = size; bestId = id; }
+  }
+  if (bestSize < n * 0.12) return null;
+  let tl, tr, br, bl, a = Infinity, b = -Infinity, c = -Infinity, e = Infinity;
+  for (let p = 0; p < n; p++) {
+    if (lab[p] !== bestId) continue;
+    const x = p % W, y = (p / W) | 0;
+    if (x + y < a) { a = x + y; tl = [x, y]; }
+    if (x + y > b) { b = x + y; br = [x, y]; }
+    if (x - y > c) { c = x - y; tr = [x, y]; }
+    if (x - y < e) { e = x - y; bl = [x, y]; }
+  }
+  const area = Math.abs((tr[0] - bl[0]) * (br[1] - tl[1]) - (br[0] - tl[0]) * (tr[1] - bl[1])) / 2;
+  return area > n * 0.12 ? [tl, tr, br, bl] : null;
+}
+function quadOf(cv) {   // im verkleinerten Bild suchen, in Bildpunkte des Originals umrechnen
+  const W = 240, k = W / cv.width, H = Math.max(1, Math.round(cv.height * k));
+  const sm = document.createElement('canvas'); sm.width = W; sm.height = H;
+  const sx = sm.getContext('2d'); sx.drawImage(cv, 0, 0, W, H);
+  const q = paperQuad(sx.getImageData(0, 0, W, H), W, H);
+  return q && q.map(([x, y]) => [(x + .5) / k, (y + .5) / k]);
+}
+function warpQuad(src, q) {
+  const dist = (p, r) => Math.hypot(p[0] - r[0], p[1] - r[1]);
+  let w = Math.max(dist(q[0], q[1]), dist(q[3], q[2])), hh = Math.max(dist(q[0], q[3]), dist(q[1], q[2]));
+  const k = Math.min(1, 2000 / Math.max(w, hh)); w = Math.max(1, Math.round(w * k)); hh = Math.max(1, Math.round(hh * k));
+  const sw = src.width, sh = src.height, sd = src.getContext('2d').getImageData(0, 0, sw, sh).data;
+  const out = document.createElement('canvas'); out.width = w; out.height = hh;
+  const ox = out.getContext('2d'), od = ox.createImageData(w, hh), o = od.data;
+  const map = sq2quad(q[0][0], q[0][1], q[1][0], q[1][1], q[2][0], q[2][1], q[3][0], q[3][1]);
+  for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) {
+    const [px, py] = map((x + .5) / w, (y + .5) / hh);
+    const x0 = Math.max(0, Math.min(sw - 2, Math.floor(px))), y0 = Math.max(0, Math.min(sh - 2, Math.floor(py)));
+    const fx = Math.min(1, Math.max(0, px - x0)), fy = Math.min(1, Math.max(0, py - y0));
+    const i00 = (y0 * sw + x0) * 4, i01 = i00 + sw * 4, oi = (y * w + x) * 4;
+    for (let ch = 0; ch < 3; ch++)
+      o[oi + ch] = (sd[i00 + ch] * (1 - fx) + sd[i00 + 4 + ch] * fx) * (1 - fy) + (sd[i01 + ch] * (1 - fx) + sd[i01 + 4 + ch] * fx) * fy;
+    o[oi + 3] = 255;
+  }
+  ox.putImageData(od, 0, 0);
+  return out;
+}
+/* Vollbild-Scanner. sid = erster Schüler; mit „Nächster ›“ geht es durch die Klasse. */
+function docScanner(cls, tab, col, sid) {
+  return new Promise(async resolve => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { alert('Hier ist kein Kamerazugriff möglich. Bitte „Datei auswählen“ nutzen.'); resolve(); return; }
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1920 } } }); }
+    catch (e) { alert(e.name === 'NotAllowedError' ? 'Die Kamera ist nicht freigegeben. Bitte beim Nachfragen „Erlauben“ wählen.' : 'Die Kamera ließ sich nicht starten.'); resolve(); return; }
+    const L = () => { const c = S.classes.find(x => x.id === cls.id) || cls; return { c, t: c.tabs.find(x => x.id === tab.id) || tab }; };
+    const video = h('video', { playsinline: true, muted: true, autoplay: true });
+    video.muted = true; video.srcObject = stream;
+    const over = h('canvas', { class: 'sc-over' }), still = h('canvas', { class: 'sc-still', hidden: true });
+    const hd = [0, 1, 2, 3].map(() => h('div', { class: 'sc-h', hidden: true }));
+    const view = h('div', { class: 'sc-view' }, video, still, over, ...hd);
+    const stSel = h('select', { 'aria-label': 'Schüler' });
+    const info = h('span', { class: 'sc-info' });
+    const shot = h('button', { type: 'button', class: 'sc-shot', 'aria-label': 'Seite aufnehmen' });
+    const next = h('button', { type: 'button' }, 'Nächster ›');
+    const retake = h('button', { type: 'button', hidden: true }, 'Wiederholen');
+    const take = h('button', { type: 'button', class: 'primary', hidden: true }, 'Seite übernehmen');
+    let cap = null, quad = null, mode = 'live', timer = null, busy = false;
+    const fill = () => {
+      const { c, t } = L();
+      stSel.replaceChildren(...shownStudents(c).map(s => { const n = scanPages(t, s.id, col.id).length; return h('option', { value: s.id }, s.name + (n ? ' · ' + n + (n === 1 ? ' Seite' : ' Seiten') : '')); }));
+      stSel.value = sid;
+    };
+    const fit = (w, hgt) => { const bw = view.clientWidth, bh = view.clientHeight, s = Math.min(bw / w, bh / hgt); return { s, ox: (bw - w * s) / 2, oy: (bh - hgt * s) / 2, bw, bh }; };
+    const paint = (q, w, hgt) => {
+      const f = fit(w, hgt), dpr = window.devicePixelRatio || 1;
+      over.width = f.bw * dpr; over.height = f.bh * dpr;
+      const x = over.getContext('2d'); x.scale(dpr, dpr); x.clearRect(0, 0, f.bw, f.bh);
+      if (!q) return f;
+      x.beginPath(); q.forEach(([a, b], i) => x[i ? 'lineTo' : 'moveTo'](f.ox + a * f.s, f.oy + b * f.s)); x.closePath();
+      x.fillStyle = 'rgba(46, 160, 120, .18)'; x.fill(); x.lineWidth = 3; x.strokeStyle = '#3ed39a'; x.stroke();
+      return f;
+    };
+    const live = () => {
+      if (mode !== 'live' || !video.videoWidth) return;
+      const W = 240, H = Math.round(video.videoHeight * W / video.videoWidth), sm = document.createElement('canvas');
+      sm.width = W; sm.height = H; const sx = sm.getContext('2d'); sx.drawImage(video, 0, 0, W, H);
+      const q = paperQuad(sx.getImageData(0, 0, W, H), W, H);
+      paint(q && q.map(([a, b]) => [a * video.videoWidth / W, b * video.videoHeight / H]), video.videoWidth, video.videoHeight);
+    };
+    const place = () => {
+      const f = paint(quad, cap.width, cap.height);
+      quad.forEach(([a, b], i) => { hd[i].style.left = (f.ox + a * f.s) + 'px'; hd[i].style.top = (f.oy + b * f.s) + 'px'; });
+    };
+    hd.forEach((el, i) => {
+      el.addEventListener('pointerdown', e => {
+        e.preventDefault(); el.setPointerCapture(e.pointerId);
+        const move = ev => {
+          const r = view.getBoundingClientRect(), f = fit(cap.width, cap.height);
+          quad[i] = [Math.max(0, Math.min(cap.width, (ev.clientX - r.left - f.ox) / f.s)), Math.max(0, Math.min(cap.height, (ev.clientY - r.top - f.oy) / f.s))];
+          place();
+        };
+        const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); };
+        el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+      });
+    });
+    const setMode = m => {
+      mode = m;
+      const adj = m === 'adjust';
+      video.hidden = adj; still.hidden = !adj; hd.forEach(x => { x.hidden = !adj; });
+      shot.hidden = next.hidden = adj; retake.hidden = take.hidden = !adj; stSel.disabled = adj;
+      if (!adj) paint(null, 1, 1);
+    };
+    shot.addEventListener('click', () => {
+      if (!video.videoWidth) return;
+      const k = Math.min(1, 2600 / Math.max(video.videoWidth, video.videoHeight));
+      cap = document.createElement('canvas'); cap.width = Math.round(video.videoWidth * k); cap.height = Math.round(video.videoHeight * k);
+      cap.getContext('2d').drawImage(video, 0, 0, cap.width, cap.height);
+      const iw = cap.width, ih = cap.height;
+      quad = quadOf(cap) || [[iw * .06, ih * .06], [iw * .94, ih * .06], [iw * .94, ih * .94], [iw * .06, ih * .94]];
+      still.width = iw; still.height = ih; still.getContext('2d').drawImage(cap, 0, 0);
+      setMode('adjust'); place();
+      info.textContent = 'Ecken bei Bedarf auf die Blattecken ziehen.';
+    });
+    retake.addEventListener('click', () => { setMode('live'); info.textContent = ''; });
+    take.addEventListener('click', async () => {
+      if (busy) return; busy = true; take.disabled = true; info.textContent = 'Wird gespeichert …';
+      try {
+        const page = warpQuad(cap, quad); scanClean(page);
+        const st = L().c.students.find(s => s.id === sid);
+        await scanPut(L().t, sid, col.id, await scanJpeg(page));
+        scanSync();
+        const n = scanPages(L().t, sid, col.id).length;
+        fill(); setMode('live');
+        info.textContent = 'Seite ' + n + ' für ' + (st ? st.name : '') + ' gespeichert. Nächste Seite oder „Nächster ›“.';
+      } catch (e) { info.textContent = 'Speichern fehlgeschlagen: ' + e.message; }
+      busy = false; take.disabled = false;
+    });
+    next.addEventListener('click', () => {
+      const list = shownStudents(L().c), i = list.findIndex(s => s.id === sid);
+      if (i < list.length - 1) { sid = list[i + 1].id; fill(); info.textContent = 'Jetzt: ' + list[i + 1].name; }
+      else info.textContent = 'Das war der letzte Schüler.';
+    });
+    stSel.addEventListener('change', () => { sid = stSel.value; info.textContent = ''; });
+    const finish = () => {
+      clearInterval(timer); stream.getTracks().forEach(t => t.stop());
+      d.close(); d.remove(); resolve();
+    };
+    const x = iconBtn('close', 'Scanner schließen', finish), ok = iconBtn('check', 'Fertig', finish); ok.classList.add('primary');
+    const d = h('dialog', { class: 'scanner' },
+      h('div', { class: 'sc-top' }, x, stSel, ok), view,
+      h('div', { class: 'sc-bot' }, info, retake, shot, take, next));
+    d.addEventListener('cancel', e => { e.preventDefault(); finish(); });
+    document.body.append(d); d.showModal();
+    fill();
+    info.textContent = col.name + ' – Blatt auf dunklen Untergrund legen und auslösen.';
+    try { await video.play(); } catch (e) {}
+    timer = setInterval(live, 350);
+  });
 }
 /* Drehung je Seite: eigene Zelle „<Spalte>:r:<Seite>“ (90/180/270), das Bild selbst bleibt unverändert. */
 function scanDraw(cv, img, deg) {
@@ -2315,9 +2569,9 @@ async function scanDialog(cls, tab, st, col, onChange) {
   draw();
   await dlg('Scan – ' + st.name, h('div', {},
     h('p', { class: 'hint' }, cls.name + ' · ' + tab.name + ' · ' + col.name + (auth ? '' : ' – nicht bei OneDrive angemeldet: Die Scans liegen vorerst nur auf diesem Gerät.')),
-    h('div', { class: 'scantools' }, h('button', { type: 'button', class: 'primary', onclick: () => pick(false) }, 'Dokument scannen'),
-      iconBtn('camera', 'Mit der Kamera aufnehmen (wird wie ein Scan aufgehellt)', () => pick(true)), busy),
-    h('p', { class: 'hint' }, 'Im Auswahlmenü „Dokumente scannen“ wählen – oder in der Dateien- bzw. Notizen-App scannen und das PDF hier auswählen. Alle Seiten werden übernommen.'),
+    h('div', { class: 'scantools' }, h('button', { type: 'button', class: 'primary', onclick: async () => { await docScanner(cls, tab, col, st.id); draw(); onChange(); render(); } }, 'Scannen'),
+      iconBtn('image', 'Datei oder PDF auswählen', () => pick(false)), busy),
+    h('p', { class: 'hint' }, 'Der Scanner findet das Blatt, zieht es gerade und hellt es auf. Mehrere Seiten nacheinander; mit „Nächster ›“ weiter zum nächsten Schüler.'),
     box), [{ label: 'Schließen', value: null }]);
   urls.forEach(u => URL.revokeObjectURL(u));
   onChange();
