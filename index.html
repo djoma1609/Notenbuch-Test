@@ -139,6 +139,19 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 dialog.dlg textarea.notein { min-height: 110px; }
 .dictrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
 button.rec { background: var(--bad); border-color: var(--bad); color: #fff; }
+.qrows { margin-top: 12px; max-height: 40vh; overflow-y: auto; }
+.qrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 12px; background: var(--head); margin-bottom: 6px; }
+.qrow input[type=checkbox] { width: 22px; height: 22px; flex: none; }
+.qrow select { flex: 1 1 150px; min-width: 0; }
+.qrow input.grade { width: 3.2em; text-align: center; flex: none; }
+.qinfo { flex: 1 1 100%; font-size: 12.5px; color: var(--muted); }
+.qinfo small { margin-left: 6px; }
+.qinfo small.warn { color: var(--bad); font-weight: 600; }
+.qans { background: var(--soft); border-radius: 12px; padding: 9px 12px; margin: 10px 0 0; white-space: pre-wrap; }
+.kibox { margin-top: 14px; }
+.kibox summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+.undobar { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 10px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 8px 10px 8px 16px; max-width: calc(100vw - 32px); }
 .tabs.sub { padding: 10px 16px 12px; }
 .tabs.sub button { font-size: 14px; padding: 6px 14px; font-weight: 500; }
 .tabs.sub button.active { background: var(--soft); border-color: var(--accent); color: var(--ink); font-weight: 600; box-shadow: none; }
@@ -899,7 +912,8 @@ const ICONS = {
 };
 const svgIcon = (inner, size) => '<svg viewBox="0 0 24 24" width="' + (size || 20) + '" height="' + (size || 20) + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + inner + '</svg>';
 ICONS.backup = '<path d="M10 5H9a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1"/><path d="M7 9H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-3"/><line x1="13.5" y1="2" x2="13.5" y2="11.5"/><polyline points="10.5 8.5 13.5 11.5 16.5 8.5"/>';
-ICONS.sync = '<g class="arrows"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></g>';
+ICONS.voice = '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="22"/>';
+ICONS.sync ='<g class="arrows"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></g>';
 const SYNC_MARK = {
   ok: '<polyline points="8.5 12.3 11 14.8 15.5 9.6" stroke="var(--good)" stroke-width="2.6"/>',
   bad: '<path d="M9.4 9.4l5.2 5.2M14.6 9.4l-5.2 5.2" stroke="var(--bad)" stroke-width="2.6"/>'
@@ -1105,6 +1119,288 @@ async function studentNotes(st) {
   render();
 }
 
+/* ---------- Schnelleingabe: Noten tippen oder diktieren, wahlweise mit KI ----------
+   Es wird nie still eingetragen: Jede erkannte Note steht erst in einer Liste und wird nur
+   übernommen, wenn sie abgehakt ist. Danach lässt sich alles rückgängig machen.
+   Die KI ist ein Zusatz: nur auf diesem Gerät eingeschaltet, Schlüssel nur hier gespeichert,
+   und statt Namen gehen nur Kürzel (S1, S2 …) hinaus. */
+const KI_KEY = 'notenbuch.ki' + ENV;
+const kiConf = () => readJson(KI_KEY) || {};
+const fold = s => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .replace(/ß/g, 'ss').replace(/ae/g, 'a').replace(/oe/g, 'o').replace(/ue/g, 'u');
+const nameParts = st => fold(st.name).split(/[^a-z]+/).filter(p => p.length >= 2);
+const QE_FILL = new Set(['eine', 'ein', 'einen', 'einer', 'note', 'noten', 'hat', 'bekommt', 'kriegt', 'bekam', 'kriegte', 'ist', 'die', 'der', 'das', 'und', 'mit', 'fur', 'im', 'in', 'bei', 'beim', 'auf', 'von', 'gibt', 'geben', 'eintragen', 'trag', 'trage', 'schreib', 'schreibe', 'bitte', 'dann', 'noch', 'also']);
+const QE_NUM = { eins: '1', zwei: '2', drei: '3', vier: '4', funf: '5', sechs: '6' };
+function lev(a, b) {
+  if (Math.abs(a.length - b.length) > 1) return 2;
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+// 3 = gleich, 2 = Anfang passt (ab 4 Buchstaben), 1 = ein Buchstabe falsch (ab 5 Buchstaben)
+function wordMatch(w, part) {
+  if (w === part) return 3;
+  if (w.length >= 4 && part.length >= 4 && (part.startsWith(w) || w.startsWith(part))) return 2;
+  if (part.length >= 5 && lev(w, part) <= 1) return 1;
+  return 0;
+}
+function matchStudents(words, students) {
+  let best = 0, hits = [];
+  for (const st of students) {
+    const sc = nameParts(st).reduce((a, p) => a + Math.max(0, ...words.map(w => wordMatch(w, p))), 0);
+    if (sc > best) { best = sc; hits = [st]; } else if (sc && sc === best) hits.push(st);
+  }
+  return best ? hits : [];
+}
+const normGrade = v => String(v || '').trim().replace(/\s/g, '').replace(/[−–]/g, '-').replace(/plus$/i, '+').replace(/minus$/i, '-');
+/* Ohne KI: „Lena 2, Emre drei plus, Jonas Fischer 4 minus“ → Schüler und Noten.
+   Nennt der Satz eine Leistung (z. B. „Test 2“), gilt diese. */
+function parseQuick(text, cls, tab, colId) {
+  const pad = s => ' ' + fold(s).replace(/[−–]/g, '-').replace(/\n/g, ' , ').replace(/([,;:.!?()])/g, ' $1 ').replace(/\s+/g, ' ').trim() + ' ';
+  let t = pad(text);
+  // Genannte Leistungen durch Marken ersetzen; jede gilt ab ihrer Nennung.
+  tab.columns.map((c, i) => ({ i, f: pad(c.name).trim() })).filter(x => x.f.length >= 2).sort((a, b) => b.f.length - a.f.length)
+    .forEach(x => { t = t.split(' ' + x.f + ' ').join(' , §' + x.i + ' , '); });
+  const toks = t.match(/§[0-9]+|[0-9]+(?:[.,][0-9]+)?|[+-]|[a-z]+|[,;:.!?]/g) || [];
+  const first = toks.find(w => w[0] === '§');
+  const shown = first ? tab.columns[+first.slice(1)].id : colId;
+  const out = [];
+  let buf = [];
+  const flush = g => {
+    const words = buf.filter(w => !QE_FILL.has(w));
+    if (words.length || g != null) {
+      const hits = words.length ? matchStudents(words, cls.students) : [];
+      out.push({ sid: hits.length === 1 ? hits[0].id : '', colId, g: g || '', src: words.join(' '),
+        msg: hits.length > 1 ? 'mehrdeutig: ' + hits.map(s => s.name).join(' / ') : !words.length ? 'Note ohne Namen' : g == null ? 'keine Note erkannt' : 'Schüler nicht erkannt' });
+    }
+    buf = [];
+  };
+  for (let i = 0; i < toks.length; i++) {
+    const w = toks[i];
+    if (w[0] === '§') { colId = tab.columns[+w.slice(1)].id; continue; }
+    if (/^[,;:.!?]$/.test(w)) { if (buf.some(x => !QE_FILL.has(x))) flush(null); else buf = []; continue; }
+    let g = /^[1-6]$/.test(w) ? w : QE_NUM[w] || null;
+    if (!g && /^[0-9]/.test(w)) { buf.push(w); continue; }
+    if (g) {
+      const nx = toks[i + 1];
+      if (nx === '+' || nx === 'plus') { g += '+'; i++; } else if (nx === '-' || nx === 'minus') { g += '-'; i++; }
+      flush(g); continue;
+    }
+    if (w === '+' || w === '-') continue;
+    buf.push(w);
+  }
+  if (buf.some(x => !QE_FILL.has(x))) flush(null);
+  return { rows: out.filter(r => r.sid || r.g || r.src), colId: shown };
+}
+
+const KI_SYSTEM = `Du bist der Notenassistent im Notenbuch einer Lehrkraft. Du arbeitest nur im gerade geöffneten Fach.
+- Antworte auf Deutsch und so knapp wie möglich: höchstens zwei kurze Sätze oder eine kurze Liste. Keine Einleitung, keine Höflichkeitsfloskeln, keine Erklärungen, wie du vorgehst.
+- Beziehe dich ausschließlich auf die mitgelieferten Daten dieses Fachs. Fehlt etwas, antworte: „Dazu habe ich in diesem Fach keine Daten.“ Erfinde nichts, nutze kein Allgemeinwissen, gib keine pädagogischen Ratschläge.
+- Schüler heißen nur S1, S2 usw. Verwende genau diese Kürzel, die App setzt die Namen wieder ein. „S1 oder S4“ in der Eingabe heißt: Name nicht eindeutig – dann keine Note eintragen und kurz nachfragen.
+- Will die Lehrkraft Noten eintragen, liste sie in „noten“ auf (Schüler-Kürzel, Leistungs-Kürzel L1, L2 …, Note). Gültige Noten: 1 bis 6, wahlweise mit + oder - (z. B. 2+, 3-). Nennt sie keine Leistung, nimm die vorgewählte.
+- Du trägst nichts selbst ein; die Lehrkraft bestätigt jede Note. Bei reinen Fragen bleibt „noten“ leer.`;
+const KI_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['antwort', 'noten'],
+  properties: {
+    antwort: { type: 'string' },
+    noten: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['schueler', 'leistung', 'note'],
+      properties: { schueler: { type: 'string' }, leistung: { type: 'string' }, note: { type: 'string' } } } }
+  }
+};
+/* Baut die Anfrage an die KI – ohne Schülernamen. Wird auch zum Prüfen ohne Schlüssel genutzt. */
+function kiRequest(cls, tab, text, colId) {
+  const sc = new Map(cls.students.map((s, i) => [s.id, 'S' + (i + 1)]));
+  const lc = new Map(tab.columns.map((c, i) => [c.id, 'L' + (i + 1)]));
+  const index = cls.students.map(s => ({ id: s.id, parts: nameParts(s) }));
+  const pseudo = text.replace(/\p{L}+/gu, w => {
+    const f = fold(w);
+    if (f.length < 2 || QE_FILL.has(f)) return w;
+    let best = 0, ids = [];
+    for (const p of index) {
+      const s = Math.max(0, ...p.parts.map(x => wordMatch(f, x)));
+      if (s > best) { best = s; ids = [p.id]; } else if (s && s === best) ids.push(p.id);
+    }
+    return best ? ids.map(id => sc.get(id)).join(' oder ') : w;
+  });
+  const catName = id => (tab.categories.find(c => c.id === id) || {}).name || '';
+  const defs = calcColumns(tab, 'J');
+  const data = {
+    klasse: cls.name, fach: tab.name, vorgewaehlte_leistung: lc.get(colId),
+    leistungen: tab.columns.map(c => ({ kuerzel: lc.get(c.id), name: c.name, bereich: catName(c.catId), halbjahr: colHalf(c), faktor: c.factor })),
+    schueler: cls.students.map(s => {
+      const noten = {}, schnitt = {};
+      for (const c of tab.columns) { const v = getCell(tab, s.id, c.id); if (v) noten[lc.get(c.id)] = v.v; }
+      for (const d of defs) { const v = d.get(s.id); if (v != null) schnitt[d.label + (d.sub ? ' ' + d.sub : '')] = fmtNum(v); }
+      return { kuerzel: sc.get(s.id), noten, schnitt };
+    })
+  };
+  return {
+    sc, lc, pseudo,
+    body: {
+      model: 'claude-opus-5-5', max_tokens: 4000,
+      output_config: { effort: 'low', format: { type: 'json_schema', schema: KI_SCHEMA } },
+      fallbacks: 'default',
+      system: KI_SYSTEM,
+      messages: [{ role: 'user', content: 'Daten dieses Fachs:\n' + JSON.stringify(data) + '\n\nEingabe der Lehrkraft:\n' + pseudo }]
+    }
+  };
+}
+async function askKI(cls, tab, text, colId, key) {
+  const req = kiRequest(cls, tab, text, colId);
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 90000);
+  let res;
+  try {
+    res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', signal: ctl.signal,
+      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2026-10-21',
+        'anthropic-beta': 'server-side-fallback-2026-07-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify(req.body)
+    });
+  } catch (e) { throw new Error(e.name === 'AbortError' ? 'Die KI hat zu lange gebraucht.' : 'Keine Verbindung zur KI. Ist das Internet an?'); }
+  finally { clearTimeout(timer); }
+  const msg = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(res.status === 401 ? 'Der Zugangsschlüssel stimmt nicht.' : res.status === 429 ? 'Zu viele Anfragen – bitte kurz warten.' :
+    res.status === 402 || /credit/i.test((msg.error || {}).message || '') ? 'Das Guthaben beim KI-Anbieter ist aufgebraucht.' : 'Die KI meldet einen Fehler: ' + ((msg.error || {}).message || res.status));
+  if (msg.stop_reason === 'refusal') throw new Error('Die KI hat diese Anfrage abgelehnt.');
+  const block = (msg.content || []).find(b => b.type === 'text');
+  let obj;
+  try { obj = JSON.parse(block.text); } catch (e) { throw new Error('Die Antwort der KI war unvollständig. Bitte noch einmal.'); }
+  const sid = new Map([...req.sc].map(([id, k]) => [k, id])), cid = new Map([...req.lc].map(([id, k]) => [k, id]));
+  const names = new Map(cls.students.map(s => [req.sc.get(s.id), s.name]));
+  return {
+    antwort: String(obj.antwort || '').replace(/\bS\d+\b/g, k => names.get(k) || k),
+    rows: (obj.noten || []).map(n => ({ sid: sid.get(String(n.schueler).trim().toUpperCase()) || '', colId: cid.get(String(n.leistung).trim().toUpperCase()) || colId,
+      g: normGrade(n.note), src: 'KI', msg: 'Schüler nicht erkannt' }))
+  };
+}
+
+function undoBar(text, undo) {
+  document.querySelectorAll('.undobar').forEach(b => b.remove());
+  const bar = h('div', { class: 'undobar', role: 'status' }, h('span', {}, text));
+  bar.append(h('button', { type: 'button', class: 'small', onclick: () => { bar.remove(); undo(); } }, 'Rückgängig'),
+    iconBtn('close', 'Hinweis schließen', () => bar.remove()));
+  document.body.append(bar);
+  setTimeout(() => bar.remove(), 30000);
+}
+
+async function quickEntry(cls, tab) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const view = S.ui.view === 2 || S.ui.view === 'J' ? S.ui.view : 1;
+  const live = () => { const c = S.classes.find(x => x.id === cls.id) || cls; return { c, t: c.tabs.find(x => x.id === tab.id) || tab }; };
+  const colName = id => { const c = tab.columns.find(x => x.id === id); return c ? c.name : '?'; };
+  const pre = [...tab.columns].reverse().find(c => view === 'J' || colHalf(c) === view) || tab.columns[tab.columns.length - 1];
+  const colSel = h('select', { 'aria-label': 'Leistung' }, tab.columns.map(c => h('option', { value: c.id }, c.name + ' (' + colHalf(c) + '. Hj)')));
+  colSel.value = pre.id;
+  const ta = h('textarea', { class: 'notein', placeholder: 'z. B. Lena 2, Emre 3 plus, Jonas Fischer 4 minus', 'aria-label': 'Noten tippen oder diktieren', autocapitalize: 'words' });
+  const msg = h('span', { class: 'hint' }, SR ? '' : 'Zum Diktieren die Mikrofon-Taste der Tastatur antippen.');
+  const answer = h('p', { class: 'qans', hidden: true });
+  const box = h('div', { class: 'qrows' });
+  let rows = [];
+  const draw = () => {
+    box.replaceChildren(...rows.map(r => {
+      const stSel = h('select', { 'aria-label': 'Schüler' }, h('option', { value: '' }, '– Schüler wählen –'), cls.students.map(s => h('option', { value: s.id }, s.name)));
+      stSel.value = r.sid || '';
+      const gIn = h('input', { type: 'text', class: 'grade', value: r.g, maxlength: 2, autocomplete: 'off', 'aria-label': 'Note' });
+      const chk = h('input', { type: 'checkbox', 'aria-label': 'Übernehmen' });
+      const info = h('small', {});
+      const upd = reset => {
+        r.sid = stSel.value; r.g = normGrade(gIn.value);
+        const ok = !!r.sid && GRADE_RE.test(r.g);
+        const old = ok ? getCell(tab, r.sid, r.colId) : null;
+        const same = old && old.v === r.g;
+        info.textContent = !r.sid ? r.msg : !ok ? 'Note ungültig' : same ? 'steht schon so da' : old ? 'ersetzt ' + old.v : '';
+        info.className = old && !same ? 'warn' : '';
+        gIn.dataset.g = ok ? r.g[0] : '';
+        chk.disabled = !ok || same;
+        if (reset || chk.disabled) chk.checked = ok && !old;
+        r.on = chk.checked;
+      };
+      stSel.addEventListener('change', () => upd(true));
+      gIn.addEventListener('input', () => upd(true));
+      chk.addEventListener('change', () => { r.on = chk.checked; });
+      upd(true);
+      return h('div', { class: 'qrow' }, chk, stSel, gIn,
+        h('span', { class: 'qinfo' }, h('b', {}, colName(r.colId)), r.src ? ' · „' + r.src + '“' : '', info));
+    }));
+    if (!rows.length && ta.value.trim()) box.append(h('p', { class: 'hint' }, 'Noch nichts erkannt. Beispiel: „Lena 2, Emre 3 plus“.'));
+  };
+  const parse = () => {
+    const p = parseQuick(ta.value, cls, tab, colSel.value);
+    if (p.colId !== colSel.value) colSel.value = p.colId;
+    rows = p.rows; answer.hidden = true; draw();
+  };
+  let tmr = null;
+  ta.addEventListener('input', () => { clearTimeout(tmr); tmr = setTimeout(parse, 250); });
+  colSel.addEventListener('change', () => { rows.forEach(r => { if (r.src !== 'KI') r.colId = colSel.value; }); draw(); });
+
+  let rec = null;
+  const stop = () => { if (rec) { try { rec.stop(); } catch (e) {} } };
+  const row = h('div', { class: 'dictrow' });
+  if (SR) {
+    const mic = h('button', { type: 'button' }, '🎤 Diktieren');
+    mic.addEventListener('click', () => {
+      if (rec) { stop(); return; }
+      const base = ta.value ? ta.value.replace(/\s*$/, ', ') : '';
+      try {
+        rec = new SR(); rec.lang = 'de-DE'; rec.continuous = true; rec.interimResults = true;
+        rec.onresult = e => { let s = ''; for (const r of e.results) s += r[0].transcript; ta.value = base + s; clearTimeout(tmr); tmr = setTimeout(parse, 250); };
+        rec.onerror = e => { msg.textContent = e.error === 'not-allowed' ? 'Mikrofon nicht freigegeben. Bitte erlauben oder die Mikrofon-Taste der Tastatur nutzen.' : 'Diktieren ist hier nicht möglich – bitte die Mikrofon-Taste der Tastatur nutzen.'; };
+        rec.onend = () => { rec = null; mic.textContent = '🎤 Diktieren'; mic.classList.remove('rec'); };
+        rec.start(); mic.textContent = '■ Stopp'; mic.classList.add('rec'); msg.textContent = 'Ich höre zu …';
+      } catch (e) { rec = null; msg.textContent = 'Diktieren ist hier nicht möglich – bitte die Mikrofon-Taste der Tastatur nutzen.'; }
+    });
+    row.append(mic);
+  }
+
+  // KI-Zusatz: nur auf diesem Gerät, standardmäßig aus.
+  const conf = kiConf();
+  const kiOn = h('input', { type: 'checkbox', class: 'switch', role: 'switch', checked: !!conf.on });
+  const kiKey = h('input', { type: 'password', value: conf.key || '', placeholder: 'sk-ant-…', autocomplete: 'off', 'aria-label': 'Zugangsschlüssel für die KI' });
+  const kiBtn = h('button', { type: 'button' }, '✦ KI fragen');
+  const kiShow = () => {
+    try { localStorage.setItem(KI_KEY, JSON.stringify({ on: kiOn.checked, key: kiKey.value.trim() })); } catch (e) {}
+    kiBtn.hidden = !(kiOn.checked && kiKey.value.trim());
+  };
+  kiOn.addEventListener('change', kiShow); kiKey.addEventListener('change', kiShow);
+  kiShow();
+  kiBtn.addEventListener('click', async () => {
+    const text = ta.value.trim(); if (!text) { msg.textContent = 'Erst etwas tippen oder diktieren.'; return; }
+    stop(); kiBtn.disabled = true; msg.textContent = 'Die KI denkt nach …';
+    try {
+      const r = await askKI(cls, tab, text, colSel.value, kiKey.value.trim());
+      answer.textContent = r.antwort; answer.hidden = !r.antwort;
+      rows = r.rows; draw(); msg.textContent = '';
+    } catch (e) { msg.textContent = e.message; }
+    kiBtn.disabled = false;
+  });
+  row.append(kiBtn, msg);
+  const kiBox = h('details', { class: 'kibox' }, h('summary', {}, 'KI-Hilfe (Zusatz)'),
+    h('label', { class: 'switchrow' }, h('span', {}, 'KI-Hilfe auf diesem Gerät', h('small', {}, 'Versteht freiere Sätze und beantwortet Fragen zu diesem Fach')), kiOn),
+    field('Zugangsschlüssel (bleibt nur auf diesem Gerät)', kiKey),
+    h('p', { class: 'hint' }, 'Gesendet werden: Klasse, Fach, Leistungen, Noten und Ihr Satz – Schülernamen werden vorher durch Kürzel (S1, S2 …) ersetzt. Ein falsch verstandener Name kann im Satz unverändert mitgehen. Kosten fallen beim KI-Anbieter an.'));
+
+  const r = await dlg('Schnelleingabe: ' + tab.name, h('div', {}, field('Leistung', colSel), ta, row, answer, box, kiBox), [
+    { label: 'Abbrechen', value: null },
+    { label: 'Abgehakte Noten eintragen', primary: true, fn: () => { stop(); return rows.filter(x => x.on && x.sid && GRADE_RE.test(x.g)); } }
+  ]);
+  stop(); clearTimeout(tmr);
+  if (!r || !r.length) return;
+  const { t } = live();
+  const before = [];
+  for (const x of r) {
+    if (!before.some(b => b.sid === x.sid && b.colId === x.colId)) { const c = getCell(t, x.sid, x.colId); before.push({ sid: x.sid, colId: x.colId, v: c ? c.v : null }); }
+    setCell(t, x.sid, x.colId, x.g);
+  }
+  save(); render();
+  undoBar(r.length === 1 ? '1 Note eingetragen' : r.length + ' Noten eingetragen', () => {
+    const { t: t2 } = live();
+    before.forEach(b => setCell(t2, b.sid, b.colId, b.v));
+    save(); render();
+  });
+}
+
 /* ---------- Schüler ---------- */
 async function addStudents(cls) {
   const inp = h('input', { type: 'text', placeholder: 'Nachname, Vorname', autocomplete: 'off', autocapitalize: 'words' });
@@ -1233,6 +1529,7 @@ function renderGrades(panel, cls, tab) {
         longPress(h('button', { class: v === view ? 'active' : '', 'aria-pressed': String(v === view), 'aria-label': label, title: 'Lange drücken: Noten verdecken oder anzeigen' },
           h('span', { class: 'wide' }, label), h('span', { class: 'narrow' }, short)), () => setView(v), () => { rowView.mask = !rowView.mask; render(); }))),
     h('span', { class: 'grow' }),
+    cls.students.length && tab.columns.length ? iconBtn('voice', 'Schnelleingabe: Noten tippen oder diktieren', () => quickEntry(cls, tab)) : null,
     iconBtn('export', 'CSV-Export', () => exportCsv(cls, tab, view))));
   if (!cls.students.length) { panel.append(h('div', { class: 'empty' }, 'Zuerst im Reiter „Schüler“ Namen anlegen oder importieren.')); return; }
   if (view !== 'J' && !cols.length) panel.append(h('p', { class: 'hint' }, 'Im ' + view + '. Halbjahr gibt es noch keine Leistung. Mit dem „+“ rechts eine Spalte anlegen (z. B. Klassenarbeit 1). Noten als 1–6 eingeben, optional mit + oder − (z. B. 2+).'));
