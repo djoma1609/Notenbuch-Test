@@ -146,6 +146,11 @@ button.rec { background: var(--bad); border-color: var(--bad); color: #fff; }
 @media (max-width: 560px) { .qhead > b { display: none; } }
 textarea.qtext { width: 100%; min-height: 54px; resize: vertical; }
 .qpanel .qrow { background: var(--panel); }
+.qcands { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.qcands small { color: var(--muted); }
+.qcands[hidden] { display: none; }
+button.chip { border-radius: 999px; background: var(--soft); border-color: var(--accent); }
+.qalias { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14px; padding: 2px 0; }
 .qkind { font-size: 13.5px; font-weight: 600; color: var(--accent); flex: none; }
 .grade.qpend, .sig.qpend { outline: 2px dashed var(--accent); outline-offset: 1px; }
 .qrows { margin-top: 10px; max-height: 32vh; overflow-y: auto; }
@@ -447,6 +452,8 @@ function mergeState(a, b) {
     const notes = mergeList(x.notes || [], y.notes || [], deleted, newer)
       .sort((p, q) => (p.t || '').localeCompare(q.t || '') || p.id.localeCompare(q.id));
     if (notes.length) out.notes = notes; else delete out.notes;
+    const alias = mergeList(x.alias || [], y.alias || [], deleted, newer);   // gemerkte Wörter der Spracheingabe
+    if (alias.length) out.alias = alias; else delete out.alias;
     return out;
   };
   const out = Object.assign(emptyState(), a, { deleted });
@@ -1172,7 +1179,42 @@ const KI_KEY = 'notenbuch.ki' + ENV;
 const kiConf = () => readJson(KI_KEY) || {};
 const fold = s => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
   .replace(/ß/g, 'ss').replace(/ae/g, 'a').replace(/oe/g, 'o').replace(/ue/g, 'u');
-const nameParts = st => fold(st.name).split(/[^a-z]+/).filter(p => p.length >= 2);
+// Namensteile plus gemerkte Wörter (Hörfehler, die die Lehrkraft einmal zugeordnet hat)
+const nameParts = st => fold(st.name).split(/[^a-z]+/).filter(p => p.length >= 2).concat((st.alias || []).map(a => a.w));
+function levFull(a, b) {
+  let row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const nx = [i];
+    for (let j = 1; j <= b.length; j++) nx[j] = Math.min(row[j] + 1, nx[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    row = nx;
+  }
+  return row[b.length];
+}
+/* Nicht erkannt: bis zu drei Schüler, deren Namen am ähnlichsten klingen oder aussehen. */
+function nearStudents(words, students) {
+  return students.map(st => {
+    const parts = nameParts(st);
+    let best = 0;
+    for (const w of words) for (const p of parts) {
+      const sim = 1 - levFull(w, p) / Math.max(w.length, p.length);
+      best = Math.max(best, sim, koeln(w) && koeln(w)[0] === koeln(p)[0] && koeln(w).slice(0, 2) === koeln(p).slice(0, 2) ? 0.5 : 0);
+    }
+    return { id: st.id, best };
+  }).filter(x => x.best >= 0.4).sort((a, b) => b.best - a.best).slice(0, 3).map(x => x.id);
+}
+/* Ordnet die Lehrkraft ein nicht erkanntes Wort selbst zu, merkt sich das Notenbuch das Wort beim Schüler
+   (Liste „alias“ mit eigener Kennung, wird beim Abgleich wie Notizen zusammengeführt). */
+function learnAlias(cls, st, src) {
+  const words = String(src || '').split(' ').filter(w => w.length >= 3 && !QE_FILL.has(w) && !/^[0-9]/.test(w));
+  const learned = [];
+  for (const w of words) {
+    if (nameParts(st).some(p => wordMatch(w, p))) continue;
+    if (cls.students.some(o => o !== st && nameParts(o).some(p => wordMatch(w, p) >= 2))) continue;   // gehört eher zu jemand anderem
+    (st.alias || (st.alias = [])).push({ id: uid(), w, m: nowIso() });
+    learned.push(w);
+  }
+  return learned;
+}
 const QE_FILL = new Set(['eine', 'ein', 'einen', 'einer', 'note', 'noten', 'hat', 'bekommt', 'kriegt', 'bekam', 'kriegte', 'ist', 'die', 'der', 'das', 'und', 'mit', 'fur', 'im', 'in', 'bei', 'beim', 'auf', 'von', 'gibt', 'geben', 'eintragen', 'trag', 'trage', 'schreib', 'schreibe', 'bitte', 'dann', 'noch', 'also']);
 const QE_NUM = { eins: '1', zwei: '2', drei: '3', vier: '4', funf: '5', sechs: '6' };
 function lev(a, b) {
@@ -1252,6 +1294,7 @@ function parseQuick(text, cls, tab, colId) {
   const push = (kind, words, g) => {
     const hits = words.length ? matchStudents(words, cls.students) : [];
     out.push({ kind, sid: hits.length === 1 ? hits[0].id : '', colId, g: g || '', src: words.join(' '),
+      cands: hits.length > 1 ? hits.map(s => s.id) : !hits.length && words.length ? nearStudents(words, cls.students) : [],
       msg: hits.length > 1 ? 'mehrdeutig: ' + hits.map(s => s.name).join(' / ') : !words.length ? 'Note ohne Namen'
         : kind === 'grade' && g == null ? 'keine Note erkannt' : 'Schüler nicht erkannt' });
   };
@@ -1480,11 +1523,19 @@ function quickPanel(cls, tab) {
         if (reset || chk.disabled) chk.checked = ok && !old && !same; else chk.checked = !!r.on;
         r.on = chk.checked;
       };
-      stSel.addEventListener('change', () => { upd(true); quickMark(); });
+      stSel.addEventListener('change', () => { r.manual = true; upd(true); quickMark(); chips.hidden = !!stSel.value; });
+      // Engere Auswahl: bei mehrdeutigen oder unklaren Namen die passenden Schüler zum Antippen
+      const used = id => r.kind === 'grade' ? !!getCell(t, id, r.colId) : r.kind === 'sign' ? !!getCell(t, id, r.colId + ':s') : false;
+      const cands = (r.cands || []).map(id => c.students.find(s => s.id === id)).filter(Boolean)
+        .sort((a, b) => used(a.id) - used(b.id));
+      const chips = h('span', { class: 'qcands', hidden: !!r.sid || !cands.length },
+        h('small', {}, r.msg && r.msg.startsWith('mehrdeutig') ? 'Wen meinen Sie?' : 'Meinten Sie?'),
+        cands.map(s => h('button', { type: 'button', class: 'small chip', onclick: () => { stSel.value = s.id; stSel.dispatchEvent(new Event('change')); } },
+          s.name + (used(s.id) ? ' (hat schon)' : ''))));
       if (r.kind === 'grade') what.addEventListener('input', () => { upd(true); quickMark(); });
       chk.addEventListener('change', () => { r.on = chk.checked; quickMark(); });
       upd(!('on' in r));
-      return h('div', { class: 'qrow' }, chk, stSel, what,
+      return h('div', { class: 'qrow' }, chk, stSel, what, chips,
         h('span', { class: 'qinfo' }, h('b', {}, col ? col.name : '?'), r.src ? ' · „' + r.src + '“' : '', info));
     }));
     if (!QE.rows.length && ta.value.trim()) box.append(h('p', { class: 'hint' }, 'Noch nichts erkannt. Beispiel: „Lena 2, Emre 3 plus“.'));
@@ -1500,14 +1551,21 @@ function quickPanel(cls, tab) {
   ta.addEventListener('input', later);
   colSel.addEventListener('change', () => { QE.colId = colSel.value; QE.rows.forEach(r => { if (r.src !== 'KI') { r.colId = colSel.value; delete r.on; } }); draw(); });
 
-  let rec = null;
-  const stop = QE.stop = () => { if (rec) { try { rec.stop(); } catch (e) {} } };
+  // Das iPhone beendet das Zuhören nach einer kurzen Pause. Solange nicht „Stopp“ gedrückt ist,
+  // hört es danach von selbst weiter (höchstens 8-mal hintereinander ohne neues Wort).
+  let rec = null, want = false, idle = 0;
+  const stop = QE.stop = () => { want = false; if (rec) { try { rec.stop(); } catch (e) {} } };
   const tools = h('div', { class: 'dictrow' });
   if (SR) {
     const mic = h('button', { type: 'button' }, '🎤 Diktieren');
     mic.addEventListener('click', () => {
-      if (rec) { stop(); return; }
-      const base = ta.value ? ta.value.replace(/\s*$/, ', ') : '';
+      if (want || rec) { stop(); return; }
+      want = true; idle = 0; listen();
+    });
+    const listen = () => {
+      if (!want || !QE) return;
+      const base = ta.value.trim() ? ta.value.replace(/[\s,]*$/, ', ') : '';
+      let heard = false;
       try {
         rec = new SR(); rec.lang = 'de-DE'; rec.continuous = true; rec.interimResults = true;
         // Das iPhone liefert Teilergebnisse oft mehrfach („Lena 2“, „Lena 2 Emre“ …) – nur das Längste behalten.
@@ -1519,13 +1577,24 @@ function quickPanel(cls, tab) {
             if (last && s.toLowerCase().startsWith(last.toLowerCase())) parts[parts.length - 1] = s;
             else if (!last || !last.toLowerCase().startsWith(s.toLowerCase())) parts.push(s);
           }
+          if (parts.length) heard = true;
           ta.value = base + parts.join(', '); later();
         };
-        rec.onerror = e => { msg.textContent = e.error === 'not-allowed' ? 'Mikrofon nicht freigegeben. Bitte erlauben oder die Mikrofon-Taste der Tastatur nutzen.' : 'Diktieren ist hier nicht möglich – bitte die Mikrofon-Taste der Tastatur nutzen.'; };
-        rec.onend = () => { rec = null; mic.textContent = '🎤 Diktieren'; mic.classList.remove('rec'); if (msg.textContent === 'Ich höre zu …') msg.textContent = ''; };
+        rec.onerror = e => {
+          if (e.error === 'no-speech' || e.error === 'aborted') return;   // Pause – danach weiter zuhören
+          want = false;
+          msg.textContent = e.error === 'not-allowed' ? 'Mikrofon nicht freigegeben. Bitte erlauben oder die Mikrofon-Taste der Tastatur nutzen.' : 'Diktieren ist hier nicht möglich – bitte die Mikrofon-Taste der Tastatur nutzen.';
+        };
+        rec.onend = () => {
+          rec = null;
+          idle = heard ? 0 : idle + 1;
+          if (want && QE && idle < 8) { setTimeout(listen, 200); return; }
+          want = false; mic.textContent = '🎤 Diktieren'; mic.classList.remove('rec');
+          if (msg.textContent === 'Ich höre zu …') msg.textContent = '';
+        };
         rec.start(); mic.textContent = '■ Stopp'; mic.classList.add('rec'); msg.textContent = 'Ich höre zu …';
-      } catch (e) { rec = null; msg.textContent = 'Diktieren ist hier nicht möglich – bitte die Mikrofon-Taste der Tastatur nutzen.'; }
-    });
+      } catch (e) { rec = null; want = false; mic.textContent = '🎤 Diktieren'; mic.classList.remove('rec'); msg.textContent = 'Diktieren ist hier nicht möglich – bitte die Mikrofon-Taste der Tastatur nutzen.'; }
+    };
     tools.append(mic);
   }
   if (/iP(hone|ad|od)|Macintosh/.test(navigator.userAgent) && 'ontouchend' in document)
@@ -1571,7 +1640,14 @@ function quickPanel(cls, tab) {
       if (!before.some(b => b.sid === x.sid && b.key === key)) { const c = getCell(t, x.sid, key); before.push({ sid: x.sid, key, v: c ? c.v : null }); }
       setCell(t, x.sid, key, x.kind === 'sign' ? true : x.g);
     }
-    ta.value = ''; QE.rows = QE.rows.filter(x => x.kind === 'scan' && !x.done); answer.hidden = true; msg.textContent = '';
+    // Von Hand zugeordnete, vorher nicht erkannte Wörter merken (nicht bei bloß mehrdeutigen Vornamen)
+    const learned = [];
+    for (const x of pick) if (x.manual && x.src && x.src !== 'KI' && !(x.msg || '').startsWith('mehrdeutig')) {
+      const st = lv.c.students.find(s => s.id === x.sid);
+      if (st) learnAlias(lv.c, st, x.src).forEach(w => learned.push('„' + w + '“ = ' + st.name));
+    }
+    ta.value = ''; QE.rows = QE.rows.filter(x => x.kind === 'scan' && !x.done); answer.hidden = true;
+    msg.textContent = learned.length ? 'Gemerkt: ' + learned.join(', ') : '';
     save(); render();
     const nG = pick.filter(x => x.kind === 'grade').length, nS = pick.length - nG;
     undoBar([nG ? nG + (nG === 1 ? ' Note' : ' Noten') : '', nS ? nS + (nS === 1 ? ' Unterschrift' : ' Unterschriften') : ''].filter(Boolean).join(' und ') + ' eingetragen', () => {
@@ -1580,10 +1656,19 @@ function quickPanel(cls, tab) {
       save(); render();
     });
   };
+  // Gemerkte Wörter ansehen und falsche wieder löschen
+  const aliasList = h('div', {});
+  const drawAlias = () => {
+    const items = L().c.students.flatMap(s => (s.alias || []).map(a => ({ s, a })));
+    aliasList.replaceChildren(...(items.length ? items.map(({ s, a }) => h('div', { class: 'qalias' }, h('span', {}, '„' + a.w + '“ → ' + s.name),
+      iconBtn('close', 'Vergessen', () => { s.alias = s.alias.filter(x => x !== a); if (!s.alias.length) delete s.alias; markDeleted(a.id); save(); drawAlias(); })))
+      : [h('p', { class: 'hint' }, 'Noch nichts gemerkt. Wählen Sie bei „nicht erkannt“ den richtigen Schüler, merkt sich das Notenbuch das gehörte Wort.')]));
+  };
+  const aliasBox = () => { const d = h('details', { class: 'kibox' }, h('summary', {}, 'Gemerkte Wörter'), aliasList); d.addEventListener('toggle', drawAlias); return d; };
   const okBtn = iconBtn('check', 'Abgehakte Einträge übernehmen', apply); okBtn.classList.add('primary');
   QE.el = h('div', { class: 'qpanel' },
     h('div', { class: 'qhead' }, iconBtn('close', 'Schnelleingabe schließen', () => { quickClose(); render(); }), h('b', {}, 'Schnelleingabe'), colSel, okBtn),
-    ta, tools, answer, box, kiBox);
+    ta, tools, answer, box, aliasBox(), kiBox);
   draw();
   return QE.el;
 }
