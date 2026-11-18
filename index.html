@@ -169,6 +169,15 @@ td.cell input.grade { width: 56px; text-align: center; padding: 6px 4px; font-we
 .gwrap { display: inline-flex; align-items: center; gap: 6px; }
 button.sig { width: 26px; height: 26px; padding: 0; border-radius: 50%; font-size: 13px; line-height: 1; flex: none; color: transparent; border: 1.5px dashed #b9b4aa; background: transparent; }
 button.sig.on { background: var(--good); border: 1.5px solid var(--good); color: #fff; }
+button.scn { width: 26px; height: 26px; padding: 0; border-radius: 7px; font-size: 12px; font-weight: 600; line-height: 1; flex: none; display: inline-flex; align-items: center; justify-content: center; color: #a39d92; border: 1.5px dashed #b9b4aa; background: transparent; }
+button.scn.on { background: var(--soft); border: 1.5px solid var(--accent); color: var(--accent); }
+.scantools { display: flex; align-items: center; gap: 10px; margin: 4px 0 12px; }
+.scanpg { border: 1px solid var(--line); border-radius: 10px; margin: 0 0 14px; overflow: hidden; background: var(--panel); }
+.scanhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 4px 12px; font-size: 13px; color: var(--muted); }
+.scanimg { overflow: auto; max-height: 75vh; }
+.scanimg img { display: block; width: 100%; cursor: zoom-in; }
+.scanpg.zoom .scanimg img { width: 250%; max-width: none; cursor: zoom-out; }
+.scanpg .hint { margin: 0; padding: 8px 12px; }
 td.cell .sigts { color: var(--good); min-height: 0; margin-top: 0; }
 td.cell .sigts:empty { display: none; }
 td.cell input.grade[data-g="1"], td.cell input.grade[data-g="2"] { background: var(--g-good-bg); color: var(--g-good); border-color: transparent; }
@@ -369,7 +378,7 @@ function mergeTab(a, b, deleted) {
     if (deleted[sid]) continue;
     const ca = a.cells[sid] || {}, cb = b.cells[sid] || {}, out = {};
     for (const cid of new Set([...Object.keys(ca), ...Object.keys(cb)])) {
-      if (deleted[cid]) continue;
+      if (deleted[cid] || deleted[cid.split(':')[0]]) continue;   // auch Unterschrift/Scans einer gelöschten Leistung
       out[cid] = ca[cid] && cb[cid] ? newer(ca[cid], cb[cid]) : (ca[cid] || cb[cid]);
     }
     t.cells[sid] = out;
@@ -831,6 +840,7 @@ function confirmByName(title, text, name) {
 }
 async function deleteClass(cls) {
   if (!await confirmByName('Klasse löschen', 'Klasse „' + cls.name + '“ mit allen Schülern, Noten und Listen endgültig löschen?', cls.name)) return;
+  scanForget(cls.tabs.flatMap(t => scanNames(t, () => true)));
   S.classes = S.classes.filter(c => c !== cls); markDeleted(cls.id); save(); render();
 }
 async function addTab() {
@@ -856,6 +866,7 @@ async function renameTab(tab) {
 }
 async function deleteTab(cls, tab) {
   if (!await confirmByName('Reiter löschen', 'Reiter „' + tab.name + '“ mit allen Einträgen endgültig löschen?', tab.name)) return;
+  scanForget(scanNames(tab, () => true));
   cls.tabs = cls.tabs.filter(t => t !== tab); markDeleted(tab.id); S.ui.tabId = 'students'; save(); render();
 }
 function tsToggle() {
@@ -893,6 +904,9 @@ const SYNC_MARK = {
   ok: '<polyline points="8.5 12.3 11 14.8 15.5 9.6" stroke="var(--good)" stroke-width="2.6"/>',
   bad: '<path d="M9.4 9.4l5.2 5.2M14.6 9.4l-5.2 5.2" stroke="var(--bad)" stroke-width="2.6"/>'
 };
+ICONS.camera = '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>';
+ICONS.image = '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>';
+ICONS.trash = '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>';
 function iconBtn(name, label, onclick) {
   const b = h('button', { type: 'button', class: 'iconbtn', title: label, 'aria-label': label, onclick });
   b.innerHTML = svgIcon(ICONS[name]);
@@ -1133,6 +1147,7 @@ function renderStudents(panel, cls) {
       if (!await confirmDlg('Schüler löschen', '„' + st.name + '“ samt allen Noten und Einträgen in dieser Klasse löschen?')) return;
       cls.students = cls.students.filter(x => x !== st);
       markDeleted(st.id);
+      scanForget(cls.tabs.flatMap(t => scanNames(t, sid => sid === st.id)));
       cls.tabs.forEach(t => { delete t.cells[st.id]; });
       save(); render();
     } }, h('span', { class: 'wide' }, 'Löschen'), h('span', { class: 'narrow' }, '✕'))))), plus));
@@ -1277,7 +1292,21 @@ function renderGrades(panel, cls, tab) {
           sig.addEventListener('click', () => { setCell(tab, st.id, key, getCell(tab, st.id, key) ? null : true); paint(); save(); refreshFoot(); });
           paint();
         }
-        return h('td', { class: 'cell' }, h('span', { class: 'gwrap' }, inp, sig), ts, sigTs);
+        // Scans der Arbeit je Schüler (nur wenn für diese Leistung eingeschaltet).
+        let scn = null;
+        if (col.scan) {
+          scn = h('button', { class: 'scn', type: 'button' });
+          const paintScn = () => {
+            const n = scanPages(tab, st.id, col.id).length;
+            scn.classList.toggle('on', n > 0);
+            if (n) scn.textContent = n; else scn.innerHTML = svgIcon(ICONS.camera, 15);
+            const label = (n ? 'Scan ansehen (' + n + (n === 1 ? ' Seite' : ' Seiten') + ')' : 'Scan aufnehmen') + ': ' + col.name + ' – ' + st.name;
+            scn.title = label; scn.setAttribute('aria-label', label);
+          };
+          scn.addEventListener('click', () => scanDialog(cls, tab, st, col, paintScn));
+          paintScn();
+        }
+        return h('td', { class: 'cell' }, h('span', { class: 'gwrap' }, inp, sig, scn), ts, sigTs);
       }), defTds);
   }));
   const tfoot = h('tfoot', {}, h('tr', {}, h('td', { class: 'name' }, 'Klassenschnitt'),
@@ -1300,6 +1329,7 @@ async function editColumn(tab, col, view) {
     h('option', { value: '1' }, '1. Halbjahr'), h('option', { value: '2' }, '2. Halbjahr'));
   const factor = h('input', { type: 'number', min: '0.1', step: '0.1', value: col ? col.factor : 1 });
   const sign = h('input', { type: 'checkbox', class: 'switch', role: 'switch', checked: !!(col && col.sign) });
+  const scan = h('input', { type: 'checkbox', class: 'switch', role: 'switch', checked: !!(col && col.scan) });
   const actions = [
     { label: 'Abbrechen', value: null },
     { label: isNew ? 'Anlegen' : 'Speichern', primary: true, fn: () => (name.value.trim() && +factor.value > 0) ? 'ok' : KEEP }
@@ -1309,18 +1339,21 @@ async function editColumn(tab, col, view) {
     h('div', {}, field('Bezeichnung', name),
       field('Zählt zu (z. B. ein Referat zu den Klassenarbeiten)', cat),
       h('label', { class: 'switchrow' }, h('span', {}, 'Unterschrift abhaken', h('small', {}, 'Je Schüler einen Haken setzen, sobald die Unterschrift vorliegt')), sign),
+      h('label', { class: 'switchrow' }, h('span', {}, 'Scans ablegen', h('small', {}, 'Je Schüler die fotografierte Arbeit ablegen (liegt in deinem OneDrive)')), scan),
       field('Halbjahr', half),
       field('Gewichtung innerhalb des Bereichs (z. B. 2 = zählt doppelt)', factor)), actions);
   if (!r) return;
   if (r === 'del') {
-    if (!await confirmDlg('Leistung löschen', '„' + col.name + '“ mit allen eingetragenen Noten löschen?')) return;
+    const scans = scanNames(tab, (sid, k) => k.startsWith(col.id + ':d:'));
+    if (!await confirmDlg('Leistung löschen', '„' + col.name + '“ mit allen eingetragenen Noten' + (scans.length ? ' und ' + scans.length + ' Scan-Seiten' : '') + ' löschen?')) return;
     tab.columns = tab.columns.filter(c => c !== col);
     markDeleted(col.id);
-    Object.values(tab.cells).forEach(cells => { delete cells[col.id]; delete cells[col.id + ':s']; });
+    scanForget(scans);
+    Object.values(tab.cells).forEach(cells => { for (const k of Object.keys(cells)) if (k === col.id || k.startsWith(col.id + ':')) delete cells[k]; });
   } else if (isNew) {
-    tab.columns.push({ id: uid(), name: name.value.trim(), catId: cat.value, half: +half.value, factor: +factor.value, sign: sign.checked, created: nowIso(), m: nowIso() });
+    tab.columns.push({ id: uid(), name: name.value.trim(), catId: cat.value, half: +half.value, factor: +factor.value, sign: sign.checked, scan: scan.checked, created: nowIso(), m: nowIso() });
   } else {
-    col.name = name.value.trim(); col.catId = cat.value; col.half = +half.value; col.factor = +factor.value; col.sign = sign.checked; col.m = nowIso();
+    col.name = name.value.trim(); col.catId = cat.value; col.half = +half.value; col.factor = +factor.value; col.sign = sign.checked; col.scan = scan.checked; col.m = nowIso();
   }
   save(); render();
 }
@@ -1644,6 +1677,167 @@ const cloud = {
     return r.json();
   }
 };
+
+/* ---------- Scans schriftlicher Prüfungen ----------
+   Je Schüler und Leistung beliebig viele Seiten. Die Bilder liegen als eigene Dateien im
+   App-Ordner der OneDrive (Apps/Notenbuch/Scans), im Notenbuch steht je Seite nur ein Verweis:
+   Zelle „<Spalte>:d:<Seite>“ mit dem Dateinamen. Jede Seite ist eine eigene Zelle, damit der
+   Abgleich Seiten von mehreren Geräten zusammenführt. Solange ein Bild noch nicht hochgeladen
+   ist, wartet es im Speicher dieses Geräts (IndexedDB) – so geht ohne Internet nichts verloren. */
+const SCAN_DIR = 'https://graph.microsoft.com/v1.0/me/drive/special/approot:/' + (IS_TEST ? 'Scans-Test' : 'Scans') + '/';
+const SCAN_DEL_KEY = KEY + '.scandel';
+let scanDbP = null, scanBusy = false, scanAgain = false;
+function scanDb() {
+  return scanDbP || (scanDbP = new Promise((res, rej) => {
+    const r = indexedDB.open('notenbuch-scans' + ENV, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('pages');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => { scanDbP = null; rej(r.error || new Error('Gerätespeicher nicht verfügbar')); };
+  }));
+}
+async function scanStore(mode, fn) {
+  const db = await scanDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('pages', mode);
+    const rq = fn(tx.objectStore('pages'));
+    tx.oncomplete = () => res(rq && rq.result);
+    tx.onerror = tx.onabort = () => rej(tx.error || new Error('Gerätespeicher voll oder gesperrt'));
+  });
+}
+function scanPages(tab, sid, colId) {
+  const cells = tab.cells[sid] || {}, pre = colId + ':d:';
+  return Object.keys(cells).filter(k => k.startsWith(pre) && cells[k] && cells[k].v != null)
+    .map(k => ({ key: k, name: cells[k].v, t: cells[k].t || '' }))
+    .sort((a, b) => a.t.localeCompare(b.t) || a.key.localeCompare(b.key));
+}
+function scanNames(tab, test) {
+  const out = [];
+  for (const [sid, cells] of Object.entries(tab.cells || {}))
+    for (const [k, c] of Object.entries(cells)) if (k.includes(':d:') && c && c.v != null && test(sid, k)) out.push(c.v);
+  return out;
+}
+/* Dateien entfernen: sofort aus dem Gerätespeicher, in der OneDrive sobald eine Verbindung besteht. */
+function scanForget(names) {
+  if (!names.length) return;
+  try { localStorage.setItem(SCAN_DEL_KEY, JSON.stringify((readJson(SCAN_DEL_KEY) || []).concat(names))); } catch (e) {}
+  scanStore('readwrite', s => { names.forEach(n => s.delete(n)); }).catch(() => {}).then(() => scanSync());
+}
+async function scanShrink(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('Das Bild konnte nicht gelesen werden.')); img.src = url; });
+    const k = Math.min(1, 2000 / Math.max(img.naturalWidth, img.naturalHeight));
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(img.naturalWidth * k); cv.height = Math.round(img.naturalHeight * k);
+    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+    const blob = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.8));
+    if (!blob) throw new Error('Das Bild konnte nicht verkleinert werden.');
+    return blob.arrayBuffer();
+  } finally { URL.revokeObjectURL(url); }
+}
+async function scanAdd(cls, tab, st, col, files) {
+  // Neutraler Dateiname: Die Zuordnung steht im Notenbuch (über feste Kennungen), nicht im Namen.
+  // So bleibt alles richtig, wenn Klasse, Fach, Leistung oder Schüler umbenannt oder verschoben werden.
+  for (const f of files) {
+    const buf = await scanShrink(f), id = uid();
+    const name = 'scan-' + id + '.jpg';
+    await scanStore('readwrite', s => s.put(buf, name));   // erst sicher ablegen, dann eintragen
+    setCell(tab, st.id, col.id + ':d:' + id, name);
+    save();
+  }
+  scanSync();
+}
+/* Wartende Bilder hochladen und entfernte Dateien in der OneDrive löschen. */
+async function scanSync() {
+  if (!auth || !navigator.onLine) return;
+  if (scanBusy) { scanAgain = true; return; }
+  if (syncing) { setTimeout(scanSync, 3000); return; }
+  scanBusy = true;
+  try {
+    const names = await scanStore('readonly', s => s.getAllKeys());
+    if (!names.length && !(readJson(SCAN_DEL_KEY) || []).length) return;
+    const token = await getToken();
+    if (!token) return;
+    const headers = { Authorization: 'Bearer ' + token };
+    for (const name of names) {
+      const buf = await scanStore('readonly', s => s.get(name));
+      if (!buf) continue;
+      const r = await fetch(SCAN_DIR + encodeURIComponent(name) + ':/content', { method: 'PUT', headers: { ...headers, 'Content-Type': 'image/jpeg' }, body: buf });
+      if (!r.ok) throw await httpError(r);
+      await scanStore('readwrite', s => s.delete(name));
+    }
+    for (const name of readJson(SCAN_DEL_KEY) || []) {
+      const r = await fetch(SCAN_DIR + encodeURIComponent(name), { method: 'DELETE', headers });
+      if (!r.ok && r.status !== 404) throw await httpError(r);
+      const rest = (readJson(SCAN_DEL_KEY) || []).filter(n => n !== name);
+      if (rest.length) localStorage.setItem(SCAN_DEL_KEY, JSON.stringify(rest)); else localStorage.removeItem(SCAN_DEL_KEY);
+    }
+  } catch (e) { console.error('Scans:', e); }
+  finally { scanBusy = false; if (scanAgain) { scanAgain = false; scanSync(); } }
+}
+window.addEventListener('online', () => setTimeout(scanSync, 4000));
+setTimeout(scanSync, 6000);
+/* Adresse zum Anzeigen: wartende Bilder vom Gerät, alle anderen aus der OneDrive. */
+async function scanUrl(name) {
+  const buf = await scanStore('readonly', s => s.get(name)).catch(() => null);
+  if (buf) return { url: URL.createObjectURL(new Blob([buf], { type: 'image/jpeg' })), local: true };
+  if (!navigator.onLine) throw new Error('Ohne Internet lässt sich diese Seite gerade nicht anzeigen.');
+  const token = await getToken();
+  if (!token) throw new Error('Zum Anzeigen bitte bei OneDrive anmelden.');
+  const r = await fetch(SCAN_DIR + encodeURIComponent(name), { headers: { Authorization: 'Bearer ' + token } });
+  if (r.status === 404) throw new Error('Diese Seite wurde in der OneDrive nicht gefunden (evtl. von einem anderen Gerät noch nicht hochgeladen).');
+  if (!r.ok) throw await httpError(r);
+  const meta = await r.json();
+  const url = meta['@microsoft.graph.downloadUrl'] || meta['@content.downloadUrl'];
+  if (!url) throw new Error('OneDrive hat keine Adresse für das Bild geliefert.');
+  return { url };
+}
+async function scanDialog(cls, tab, st, col, onChange) {
+  const box = h('div', {}), busy = h('span', { class: 'hint' }), urls = [];
+  const draw = () => {
+    const pages = scanPages(tab, st.id, col.id);
+    if (!pages.length) { box.replaceChildren(h('p', { class: 'hint' }, 'Noch kein Scan. Mit der Kamera ein Foto aufnehmen oder vorhandene Bilder auswählen.')); return; }
+    box.replaceChildren(...pages.map((p, i) => {
+      const img = h('img', { alt: 'Seite ' + (i + 1) });
+      const note = h('p', { class: 'hint' }, 'Wird geladen …');
+      const state = h('span', {});
+      const fig = h('div', { class: 'scanpg' },
+        h('div', { class: 'scanhead' }, h('span', {}, 'Seite ' + (i + 1) + ' von ' + pages.length, state),
+          iconBtn('trash', 'Seite entfernen', async () => {
+            if (!await confirmDlg('Seite entfernen', 'Seite ' + (i + 1) + ' von ' + st.name + ' endgültig entfernen?')) return;
+            setCell(tab, st.id, p.key, null); save(); scanForget([p.name]); draw(); onChange();
+          })),
+        note, h('div', { class: 'scanimg' }, img));
+      img.addEventListener('click', () => fig.classList.toggle('zoom'));
+      img.onload = () => note.remove();
+      img.onerror = () => { note.textContent = 'Das Bild konnte nicht geladen werden.'; };
+      scanUrl(p.name).then(u => {
+        if (u.local) { urls.push(u.url); state.textContent = ' · wartet auf OneDrive'; }
+        img.src = u.url;
+      }).catch(e => { note.textContent = e.message; });
+      return fig;
+    }));
+  };
+  const pick = camera => {
+    const inp = h('input', { type: 'file', accept: 'image/*', hidden: true, multiple: !camera, capture: camera ? 'environment' : null });
+    inp.addEventListener('change', async () => {
+      const files = [...inp.files]; inp.remove();
+      if (!files.length) return;
+      busy.textContent = 'Wird abgelegt …';
+      try { await scanAdd(cls, tab, st, col, files); } catch (e) { alert('Der Scan konnte nicht abgelegt werden: ' + e.message); }
+      busy.textContent = ''; draw(); onChange();
+    });
+    box.after(inp); inp.click();
+  };
+  draw();
+  await dlg('Scan – ' + st.name, h('div', {},
+    h('p', { class: 'hint' }, cls.name + ' · ' + tab.name + ' · ' + col.name + (auth ? '' : ' – nicht bei OneDrive angemeldet: Die Scans liegen vorerst nur auf diesem Gerät.')),
+    h('div', { class: 'scantools' }, iconBtn('camera', 'Foto aufnehmen', () => pick(true)), iconBtn('image', 'Bilder auswählen', () => pick(false)), busy),
+    box), [{ label: 'Schließen', value: null }]);
+  urls.forEach(u => URL.revokeObjectURL(u));
+  onChange();
+}
 
 /* Verschlüsselung der OneDrive-Datei: Aus dem Passwort wird per PBKDF2 ein AES-256-Schlüssel
    abgeleitet. Der Schlüssel bleibt auf dem Gerät, in der OneDrive liegt nur Verschlüsseltes. */
