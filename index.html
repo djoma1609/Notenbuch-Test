@@ -139,7 +139,16 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 dialog.dlg textarea.notein { min-height: 110px; }
 .dictrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
 button.rec { background: var(--bad); border-color: var(--bad); color: #fff; }
-.qrows { margin-top: 12px; max-height: 40vh; overflow-y: auto; }
+.qpanel { border: 1px solid var(--line); border-radius: 14px; background: var(--head); padding: 8px 10px 10px; margin: 0 0 12px; }
+.qhead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.qhead select { flex: 1; min-width: 0; }
+.qhead > b { flex: none; }
+@media (max-width: 560px) { .qhead > b { display: none; } }
+textarea.qtext { width: 100%; min-height: 54px; resize: vertical; }
+.qpanel .qrow { background: var(--panel); }
+.qkind { font-size: 13.5px; font-weight: 600; color: var(--accent); flex: none; }
+.grade.qpend, .sig.qpend { outline: 2px dashed var(--accent); outline-offset: 1px; }
+.qrows { margin-top: 10px; max-height: 32vh; overflow-y: auto; }
 .qrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 12px; background: var(--head); margin-bottom: 6px; }
 .qrow input[type=checkbox] { width: 22px; height: 22px; flex: none; }
 .qrow select { flex: 1 1 150px; min-width: 0; }
@@ -188,8 +197,9 @@ button.scn.on { background: var(--soft); border: 1.5px solid var(--accent); colo
 .scanpg { border: 1px solid var(--line); border-radius: 10px; margin: 0 0 14px; overflow: hidden; background: var(--panel); }
 .scanhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 4px 12px; font-size: 13px; color: var(--muted); }
 .scanimg { overflow: auto; max-height: 75vh; }
-.scanimg img { display: block; width: 100%; cursor: zoom-in; }
-.scanpg.zoom .scanimg img { width: 250%; max-width: none; cursor: zoom-out; }
+.scanimg img, .scanimg canvas { display: block; width: 100%; cursor: zoom-in; }
+.scanpg.zoom .scanimg img, .scanpg.zoom .scanimg canvas { width: 250%; max-width: none; cursor: zoom-out; }
+.scanhead .grow { flex: 1; }
 .scanpg .hint { margin: 0; padding: 8px 12px; }
 td.cell .sigts { color: var(--good); min-height: 0; margin-top: 0; }
 td.cell .sigts:empty { display: none; }
@@ -782,6 +792,7 @@ function render() {
   });
   const panel = h('section', { class: 'panel' });
   const tab = cls.tabs.find(t => t.id === S.ui.tabId);
+  if (QE && (!tab || tab.id !== QE.tabId)) quickClose();
   if (!tab) renderStudents(panel, cls);
   else if (tab.type === 'grades') renderGrades(panel, cls, tab);
   else renderList(panel, cls, tab);
@@ -912,7 +923,9 @@ const ICONS = {
 };
 const svgIcon = (inner, size) => '<svg viewBox="0 0 24 24" width="' + (size || 20) + '" height="' + (size || 20) + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + inner + '</svg>';
 ICONS.backup = '<path d="M10 5H9a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1"/><path d="M7 9H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-3"/><line x1="13.5" y1="2" x2="13.5" y2="11.5"/><polyline points="10.5 8.5 13.5 11.5 16.5 8.5"/>';
-ICONS.voice = '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="22"/>';
+ICONS.rotl = '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>';
+ICONS.rotr = '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>';
+ICONS.voice ='<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="22"/>';
 ICONS.sync ='<g class="arrows"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></g>';
 const SYNC_MARK = {
   ok: '<polyline points="8.5 12.3 11 14.8 15.5 9.6" stroke="var(--good)" stroke-width="2.6"/>',
@@ -1154,6 +1167,16 @@ function matchStudents(words, students) {
   }
   return best ? hits : [];
 }
+/* „lena becker emre mia“ → [lena becker] [emre] [mia]: aufeinanderfolgende Wörter desselben Schülers bleiben zusammen. */
+function splitNames(words, students) {
+  const groups = [];
+  for (const w of words) {
+    const hits = matchStudents([w], students), g = groups[groups.length - 1];
+    if (g && hits.length && g.hits.some(s => hits.includes(s))) { g.words.push(w); g.hits = g.hits.filter(s => hits.includes(s)); }
+    else groups.push({ words: [w], hits });
+  }
+  return groups.map(g => g.words);
+}
 const normGrade = v => String(v || '').trim().replace(/\s/g, '').replace(/[−–]/g, '-').replace(/plus$/i, '+').replace(/minus$/i, '-');
 /* Ohne KI: „Lena 2, Emre drei plus, Jonas Fischer 4 minus“ → Schüler und Noten.
    Nennt der Satz eine Leistung (z. B. „Test 2“), gilt diese. */
@@ -1167,20 +1190,33 @@ function parseQuick(text, cls, tab, colId) {
   const first = toks.find(w => w[0] === '§');
   const shown = first ? tab.columns[+first.slice(1)].id : colId;
   const out = [];
-  let buf = [];
+  let buf = [], mode = null;   // mode: nach „Unterschrift …“ bzw. „Scan …“ gelten die folgenden Namen dafür
+  const push = (kind, words, g) => {
+    const hits = words.length ? matchStudents(words, cls.students) : [];
+    out.push({ kind, sid: hits.length === 1 ? hits[0].id : '', colId, g: g || '', src: words.join(' '),
+      msg: hits.length > 1 ? 'mehrdeutig: ' + hits.map(s => s.name).join(' / ') : !words.length ? 'Note ohne Namen'
+        : kind === 'grade' && g == null ? 'keine Note erkannt' : 'Schüler nicht erkannt' });
+  };
+  const names = () => { const w = buf.filter(x => !QE_FILL.has(x)); buf = []; return w; };
   const flush = g => {
-    const words = buf.filter(w => !QE_FILL.has(w));
-    if (words.length || g != null) {
-      const hits = words.length ? matchStudents(words, cls.students) : [];
-      out.push({ sid: hits.length === 1 ? hits[0].id : '', colId, g: g || '', src: words.join(' '),
-        msg: hits.length > 1 ? 'mehrdeutig: ' + hits.map(s => s.name).join(' / ') : !words.length ? 'Note ohne Namen' : g == null ? 'keine Note erkannt' : 'Schüler nicht erkannt' });
-    }
-    buf = [];
+    const words = names();
+    if (g != null) { mode = null; push('grade', words, g); return; }
+    if (!words.length) return;
+    if (mode) splitNames(words, cls.students).forEach(ws => push(mode, ws)); else push('grade', words, null);
   };
   for (let i = 0; i < toks.length; i++) {
     const w = toks[i];
     if (w[0] === '§') { colId = tab.columns[+w.slice(1)].id; continue; }
-    if (/^[,;:.!?]$/.test(w)) { if (buf.some(x => !QE_FILL.has(x))) flush(null); else buf = []; continue; }
+    if (/^[,;:.!?]$/.test(w)) { flush(null); continue; }
+    const kw = /^unterschri/.test(w) ? 'sign' : /^(ein)?scan/.test(w) ? 'scan' : null;
+    if (kw) {
+      const words = names();
+      const nx = toks[i + 1], last = out[out.length - 1];
+      if (words.length) splitNames(words, cls.students).forEach(ws => push(kw, ws));          // „Lena Unterschrift“, „Lena und Emre scannen“
+      else if ((!nx || /^[,;:.!?]$/.test(nx)) && last && last.sid && !mode) out.push({ ...last, kind: kw, g: '' });   // „Lena 2, Unterschrift“
+      else mode = kw;                                                                     // „Unterschrift: Lena, Emre, Mia“
+      continue;
+    }
     let g = /^[1-6]$/.test(w) ? w : QE_NUM[w] || null;
     if (!g && /^[0-9]/.test(w)) { buf.push(w); continue; }
     if (g) {
@@ -1191,7 +1227,7 @@ function parseQuick(text, cls, tab, colId) {
     if (w === '+' || w === '-') continue;
     buf.push(w);
   }
-  if (buf.some(x => !QE_FILL.has(x))) flush(null);
+  flush(null);
   return { rows: out.filter(r => r.sid || r.g || r.src), colId: shown };
 }
 
@@ -1200,13 +1236,18 @@ const KI_SYSTEM = `Du bist der Notenassistent im Notenbuch einer Lehrkraft. Du a
 - Beziehe dich ausschließlich auf die mitgelieferten Daten dieses Fachs. Fehlt etwas, antworte: „Dazu habe ich in diesem Fach keine Daten.“ Erfinde nichts, nutze kein Allgemeinwissen, gib keine pädagogischen Ratschläge.
 - Schüler heißen nur S1, S2 usw. Verwende genau diese Kürzel, die App setzt die Namen wieder ein. „S1 oder S4“ in der Eingabe heißt: Name nicht eindeutig – dann keine Note eintragen und kurz nachfragen.
 - Will die Lehrkraft Noten eintragen, liste sie in „noten“ auf (Schüler-Kürzel, Leistungs-Kürzel L1, L2 …, Note). Gültige Noten: 1 bis 6, wahlweise mit + oder - (z. B. 2+, 3-). Nennt sie keine Leistung, nimm die vorgewählte.
-- Du trägst nichts selbst ein; die Lehrkraft bestätigt jede Note. Bei reinen Fragen bleibt „noten“ leer.`;
+- Sagt sie, dass eine Unterschrift vorliegt, liste das in „unterschriften“ auf. Will sie eine Arbeit scannen, liste das in „scannen“ auf (jeweils Schüler- und Leistungs-Kürzel).
+- Du trägst nichts selbst ein; die Lehrkraft bestätigt alles. Bei reinen Fragen bleiben die Listen leer.`;
 const KI_SCHEMA = {
-  type: 'object', additionalProperties: false, required: ['antwort', 'noten'],
+  type: 'object', additionalProperties: false, required: ['antwort', 'noten', 'unterschriften', 'scannen'],
   properties: {
     antwort: { type: 'string' },
     noten: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['schueler', 'leistung', 'note'],
-      properties: { schueler: { type: 'string' }, leistung: { type: 'string' }, note: { type: 'string' } } } }
+      properties: { schueler: { type: 'string' }, leistung: { type: 'string' }, note: { type: 'string' } } } },
+    unterschriften: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['schueler', 'leistung'],
+      properties: { schueler: { type: 'string' }, leistung: { type: 'string' } } } },
+    scannen: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['schueler', 'leistung'],
+      properties: { schueler: { type: 'string' }, leistung: { type: 'string' } } } }
   }
 };
 /* Baut die Anfrage an die KI – ohne Schülernamen. Wird auch zum Prüfen ohne Schlüssel genutzt. */
@@ -1228,12 +1269,17 @@ function kiRequest(cls, tab, text, colId) {
   const defs = calcColumns(tab, 'J');
   const data = {
     klasse: cls.name, fach: tab.name, vorgewaehlte_leistung: lc.get(colId),
-    leistungen: tab.columns.map(c => ({ kuerzel: lc.get(c.id), name: c.name, bereich: catName(c.catId), halbjahr: colHalf(c), faktor: c.factor })),
+    leistungen: tab.columns.map(c => ({ kuerzel: lc.get(c.id), name: c.name, bereich: catName(c.catId), halbjahr: colHalf(c), faktor: c.factor,
+      unterschrift_abhaken: !!c.sign, scans: !!c.scan })),
     schueler: cls.students.map(s => {
-      const noten = {}, schnitt = {};
-      for (const c of tab.columns) { const v = getCell(tab, s.id, c.id); if (v) noten[lc.get(c.id)] = v.v; }
+      const noten = {}, schnitt = {}, unterschrieben = [], gescannt = [];
+      for (const c of tab.columns) {
+        const v = getCell(tab, s.id, c.id); if (v) noten[lc.get(c.id)] = v.v;
+        if (c.sign && getCell(tab, s.id, c.id + ':s')) unterschrieben.push(lc.get(c.id));
+        if (c.scan && scanPages(tab, s.id, c.id).length) gescannt.push(lc.get(c.id));
+      }
       for (const d of defs) { const v = d.get(s.id); if (v != null) schnitt[d.label + (d.sub ? ' ' + d.sub : '')] = fmtNum(v); }
-      return { kuerzel: sc.get(s.id), noten, schnitt };
+      return { kuerzel: sc.get(s.id), noten, unterschrieben, gescannt, schnitt };
     })
   };
   return {
@@ -1271,73 +1317,127 @@ async function askKI(cls, tab, text, colId, key) {
   const names = new Map(cls.students.map(s => [req.sc.get(s.id), s.name]));
   return {
     antwort: String(obj.antwort || '').replace(/\bS\d+\b/g, k => names.get(k) || k),
-    rows: (obj.noten || []).map(n => ({ sid: sid.get(String(n.schueler).trim().toUpperCase()) || '', colId: cid.get(String(n.leistung).trim().toUpperCase()) || colId,
-      g: normGrade(n.note), src: 'KI', msg: 'Schüler nicht erkannt' }))
+    rows: [['grade', obj.noten], ['sign', obj.unterschriften], ['scan', obj.scannen]].flatMap(([kind, list]) => (list || []).map(n => ({
+      kind, sid: sid.get(String(n.schueler).trim().toUpperCase()) || '', colId: cid.get(String(n.leistung).trim().toUpperCase()) || colId,
+      g: kind === 'grade' ? normGrade(n.note) : '', src: 'KI', msg: 'Schüler nicht erkannt' })))
   };
 }
 
-function undoBar(text, undo) {
-  document.querySelectorAll('.undobar').forEach(b => b.remove());
-  const bar = h('div', { class: 'undobar', role: 'status' }, h('span', {}, text));
-  bar.append(h('button', { type: 'button', class: 'small', onclick: () => { bar.remove(); undo(); } }, 'Rückgängig'),
-    iconBtn('close', 'Hinweis schließen', () => bar.remove()));
-  document.body.append(bar);
-  setTimeout(() => bar.remove(), 30000);
+/* Die Schnelleingabe ist eine Leiste über der Tabelle (kein Fenster), damit die Noten sichtbar
+   bleiben. Sie bleibt nach dem Eintragen offen für die nächsten Sätze. */
+let QE = null;
+const qeLive = () => {
+  const c = QE && S.classes.find(x => x.id === QE.clsId), t = c && c.tabs.find(x => x.id === QE.tabId);
+  return c && t ? { c, t } : null;
+};
+function quickClose() {
+  if (!QE) return;
+  if (QE.stop) QE.stop();
+  clearTimeout(QE.tmr);
+  QE = null;
+  document.querySelectorAll('.qpend').forEach(e => e.classList.remove('qpend'));
 }
-
-async function quickEntry(cls, tab) {
+function quickToggle(cls, tab) {
+  if (QE && QE.tabId === tab.id) { quickClose(); render(); return; }
+  quickClose();
+  QE = { clsId: cls.id, tabId: tab.id, rows: [] };
+  render();
+  const ta = QE.el && QE.el.querySelector('textarea');
+  if (ta) ta.focus();
+}
+/* Noch nicht eingetragene Vorschläge in der Tabelle gestrichelt markieren. */
+function quickMark() {
+  document.querySelectorAll('.qpend').forEach(e => e.classList.remove('qpend'));
+  if (!QE) return;
+  for (const r of QE.rows) {
+    if (!r.on || !r.sid || r.kind === 'scan') continue;
+    const sel = r.kind === 'sign' ? 'button.sig' : 'input.grade';
+    const el = document.querySelector(sel + '[data-sid="' + r.sid + '"][data-col="' + r.colId + '"]');
+    if (el) el.classList.add('qpend');
+  }
+}
+function quickPanel(cls, tab) {
+  if (QE.el) { QE.colSel.replaceChildren(...tab.columns.map(c => h('option', { value: c.id }, c.name + ' (' + colHalf(c) + '. Hj)'))); QE.colSel.value = QE.colId; QE.draw(); return QE.el; }
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const view = S.ui.view === 2 || S.ui.view === 'J' ? S.ui.view : 1;
-  const live = () => { const c = S.classes.find(x => x.id === cls.id) || cls; return { c, t: c.tabs.find(x => x.id === tab.id) || tab }; };
-  const colName = id => { const c = tab.columns.find(x => x.id === id); return c ? c.name : '?'; };
+  const L = () => qeLive() || { c: cls, t: tab };
+  const colOf = id => L().t.columns.find(x => x.id === id);
   const pre = [...tab.columns].reverse().find(c => view === 'J' || colHalf(c) === view) || tab.columns[tab.columns.length - 1];
-  const colSel = h('select', { 'aria-label': 'Leistung' }, tab.columns.map(c => h('option', { value: c.id }, c.name + ' (' + colHalf(c) + '. Hj)')));
+  QE.colId = pre.id;
+  const colSel = QE.colSel = h('select', { 'aria-label': 'Leistung' }, tab.columns.map(c => h('option', { value: c.id }, c.name + ' (' + colHalf(c) + '. Hj)')));
   colSel.value = pre.id;
-  const ta = h('textarea', { class: 'notein', placeholder: 'z. B. Lena 2, Emre 3 plus, Jonas Fischer 4 minus', 'aria-label': 'Noten tippen oder diktieren', autocapitalize: 'words' });
-  const msg = h('span', { class: 'hint' }, SR ? '' : 'Zum Diktieren die Mikrofon-Taste der Tastatur antippen.');
+  const ta = h('textarea', { class: 'qtext', rows: 2, placeholder: 'z. B. Lena 2 plus, Emre drei · Unterschrift Mia · Jonas scannen', 'aria-label': 'Noten tippen oder diktieren', autocapitalize: 'words' });
+  const msg = h('span', { class: 'hint' }, SR ? '' : 'Diktieren: Mikrofon-Taste der Tastatur.');
   const answer = h('p', { class: 'qans', hidden: true });
   const box = h('div', { class: 'qrows' });
-  let rows = [];
-  const draw = () => {
-    box.replaceChildren(...rows.map(r => {
-      const stSel = h('select', { 'aria-label': 'Schüler' }, h('option', { value: '' }, '– Schüler wählen –'), cls.students.map(s => h('option', { value: s.id }, s.name)));
+  const draw = QE.draw = () => {
+    const { c, t } = L();
+    box.replaceChildren(...QE.rows.map(r => {
+      const col = colOf(r.colId);
+      const stSel = h('select', { 'aria-label': 'Schüler' }, h('option', { value: '' }, '– Schüler wählen –'), c.students.map(s => h('option', { value: s.id }, s.name)));
       stSel.value = r.sid || '';
-      const gIn = h('input', { type: 'text', class: 'grade', value: r.g, maxlength: 2, autocomplete: 'off', 'aria-label': 'Note' });
       const chk = h('input', { type: 'checkbox', 'aria-label': 'Übernehmen' });
       const info = h('small', {});
+      let what;
+      if (r.kind === 'grade') what = h('input', { type: 'text', class: 'grade', value: r.g, maxlength: 2, autocomplete: 'off', 'aria-label': 'Note' });
+      else if (r.kind === 'sign') what = h('span', { class: 'qkind' }, '✓ Unterschrift');
+      else {
+        what = h('button', { type: 'button', class: 'small' }, 'Scannen');
+        what.addEventListener('click', async () => {
+          const st = c.students.find(s => s.id === r.sid);
+          if (!st || !col || !col.scan) return;
+          await scanDialog(c, t, st, col, () => {});
+          r.done = true; render();
+        });
+      }
       const upd = reset => {
-        r.sid = stSel.value; r.g = normGrade(gIn.value);
-        const ok = !!r.sid && GRADE_RE.test(r.g);
-        const old = ok ? getCell(tab, r.sid, r.colId) : null;
-        const same = old && old.v === r.g;
-        info.textContent = !r.sid ? r.msg : !ok ? 'Note ungültig' : same ? 'steht schon so da' : old ? 'ersetzt ' + old.v : '';
+        r.sid = stSel.value;
+        if (r.kind === 'grade') r.g = normGrade(what.value);
+        let ok = !!r.sid && !!col, old = null, same = false, text = '';
+        if (!r.sid) text = r.msg;
+        else if (!col) { ok = false; text = 'Leistung fehlt'; }
+        else if (r.kind === 'grade') {
+          ok = GRADE_RE.test(r.g); old = ok ? getCell(t, r.sid, r.colId) : null; same = !!old && old.v === r.g;
+          text = !ok ? 'Note ungültig' : same ? 'steht schon so da' : old ? 'ersetzt ' + old.v : '';
+          what.dataset.g = ok ? r.g[0] : '';
+        } else if (r.kind === 'sign') {
+          ok = !!col.sign; same = ok && !!getCell(t, r.sid, r.colId + ':s');
+          text = !col.sign ? 'Unterschrift ist bei dieser Leistung ausgeschaltet' : same ? 'schon abgehakt' : '';
+        } else {
+          ok = !!col.scan; const n = ok ? scanPages(t, r.sid, r.colId).length : 0;
+          text = !col.scan ? 'Scans sind bei dieser Leistung ausgeschaltet' : n ? n + (n === 1 ? ' Seite' : ' Seiten') + ' vorhanden' : r.done ? '' : 'antippen zum Scannen';
+          what.disabled = !ok || !r.sid;
+        }
+        info.textContent = text;
         info.className = old && !same ? 'warn' : '';
-        gIn.dataset.g = ok ? r.g[0] : '';
+        if (r.kind === 'scan') { chk.hidden = true; r.on = false; return; }
         chk.disabled = !ok || same;
-        if (reset || chk.disabled) chk.checked = ok && !old;
+        if (reset || chk.disabled) chk.checked = ok && !old && !same; else chk.checked = !!r.on;
         r.on = chk.checked;
       };
-      stSel.addEventListener('change', () => upd(true));
-      gIn.addEventListener('input', () => upd(true));
-      chk.addEventListener('change', () => { r.on = chk.checked; });
-      upd(true);
-      return h('div', { class: 'qrow' }, chk, stSel, gIn,
-        h('span', { class: 'qinfo' }, h('b', {}, colName(r.colId)), r.src ? ' · „' + r.src + '“' : '', info));
+      stSel.addEventListener('change', () => { upd(true); quickMark(); });
+      if (r.kind === 'grade') what.addEventListener('input', () => { upd(true); quickMark(); });
+      chk.addEventListener('change', () => { r.on = chk.checked; quickMark(); });
+      upd(!('on' in r));
+      return h('div', { class: 'qrow' }, chk, stSel, what,
+        h('span', { class: 'qinfo' }, h('b', {}, col ? col.name : '?'), r.src ? ' · „' + r.src + '“' : '', info));
     }));
-    if (!rows.length && ta.value.trim()) box.append(h('p', { class: 'hint' }, 'Noch nichts erkannt. Beispiel: „Lena 2, Emre 3 plus“.'));
+    if (!QE.rows.length && ta.value.trim()) box.append(h('p', { class: 'hint' }, 'Noch nichts erkannt. Beispiel: „Lena 2, Emre 3 plus“.'));
+    quickMark();
   };
   const parse = () => {
-    const p = parseQuick(ta.value, cls, tab, colSel.value);
-    if (p.colId !== colSel.value) colSel.value = p.colId;
-    rows = p.rows; answer.hidden = true; draw();
+    const { c, t } = L();
+    const p = parseQuick(ta.value, c, t, colSel.value);
+    if (p.colId !== colSel.value) colSel.value = QE.colId = p.colId;
+    QE.rows = p.rows; answer.hidden = true; draw();
   };
-  let tmr = null;
-  ta.addEventListener('input', () => { clearTimeout(tmr); tmr = setTimeout(parse, 250); });
-  colSel.addEventListener('change', () => { rows.forEach(r => { if (r.src !== 'KI') r.colId = colSel.value; }); draw(); });
+  const later = () => { clearTimeout(QE.tmr); QE.tmr = setTimeout(() => { if (QE) parse(); }, 250); };
+  ta.addEventListener('input', later);
+  colSel.addEventListener('change', () => { QE.colId = colSel.value; QE.rows.forEach(r => { if (r.src !== 'KI') { r.colId = colSel.value; delete r.on; } }); draw(); });
 
   let rec = null;
-  const stop = () => { if (rec) { try { rec.stop(); } catch (e) {} } };
-  const row = h('div', { class: 'dictrow' });
+  const stop = QE.stop = () => { if (rec) { try { rec.stop(); } catch (e) {} } };
+  const tools = h('div', { class: 'dictrow' });
   if (SR) {
     const mic = h('button', { type: 'button' }, '🎤 Diktieren');
     mic.addEventListener('click', () => {
@@ -1345,13 +1445,13 @@ async function quickEntry(cls, tab) {
       const base = ta.value ? ta.value.replace(/\s*$/, ', ') : '';
       try {
         rec = new SR(); rec.lang = 'de-DE'; rec.continuous = true; rec.interimResults = true;
-        rec.onresult = e => { let s = ''; for (const r of e.results) s += r[0].transcript; ta.value = base + s; clearTimeout(tmr); tmr = setTimeout(parse, 250); };
+        rec.onresult = e => { let s = ''; for (const x of e.results) s += x[0].transcript; ta.value = base + s; later(); };
         rec.onerror = e => { msg.textContent = e.error === 'not-allowed' ? 'Mikrofon nicht freigegeben. Bitte erlauben oder die Mikrofon-Taste der Tastatur nutzen.' : 'Diktieren ist hier nicht möglich – bitte die Mikrofon-Taste der Tastatur nutzen.'; };
-        rec.onend = () => { rec = null; mic.textContent = '🎤 Diktieren'; mic.classList.remove('rec'); };
+        rec.onend = () => { rec = null; mic.textContent = '🎤 Diktieren'; mic.classList.remove('rec'); if (msg.textContent === 'Ich höre zu …') msg.textContent = ''; };
         rec.start(); mic.textContent = '■ Stopp'; mic.classList.add('rec'); msg.textContent = 'Ich höre zu …';
       } catch (e) { rec = null; msg.textContent = 'Diktieren ist hier nicht möglich – bitte die Mikrofon-Taste der Tastatur nutzen.'; }
     });
-    row.append(mic);
+    tools.append(mic);
   }
 
   // KI-Zusatz: nur auf diesem Gerät, standardmäßig aus.
@@ -1369,36 +1469,55 @@ async function quickEntry(cls, tab) {
     const text = ta.value.trim(); if (!text) { msg.textContent = 'Erst etwas tippen oder diktieren.'; return; }
     stop(); kiBtn.disabled = true; msg.textContent = 'Die KI denkt nach …';
     try {
-      const r = await askKI(cls, tab, text, colSel.value, kiKey.value.trim());
+      const { c, t } = L();
+      const r = await askKI(c, t, text, colSel.value, kiKey.value.trim());
+      if (!QE) return;
       answer.textContent = r.antwort; answer.hidden = !r.antwort;
-      rows = r.rows; draw(); msg.textContent = '';
+      QE.rows = r.rows; draw(); msg.textContent = '';
     } catch (e) { msg.textContent = e.message; }
     kiBtn.disabled = false;
   });
-  row.append(kiBtn, msg);
+  tools.append(kiBtn, msg);
   const kiBox = h('details', { class: 'kibox' }, h('summary', {}, 'KI-Hilfe (Zusatz)'),
     h('label', { class: 'switchrow' }, h('span', {}, 'KI-Hilfe auf diesem Gerät', h('small', {}, 'Versteht freiere Sätze und beantwortet Fragen zu diesem Fach')), kiOn),
     field('Zugangsschlüssel (bleibt nur auf diesem Gerät)', kiKey),
     h('p', { class: 'hint' }, 'Gesendet werden: Klasse, Fach, Leistungen, Noten und Ihr Satz – Schülernamen werden vorher durch Kürzel (S1, S2 …) ersetzt. Ein falsch verstandener Name kann im Satz unverändert mitgehen. Kosten fallen beim KI-Anbieter an.'));
 
-  const r = await dlg('Schnelleingabe: ' + tab.name, h('div', {}, field('Leistung', colSel), ta, row, answer, box, kiBox), [
-    { label: 'Abbrechen', value: null },
-    { label: 'Abgehakte Noten eintragen', primary: true, fn: () => { stop(); return rows.filter(x => x.on && x.sid && GRADE_RE.test(x.g)); } }
-  ]);
-  stop(); clearTimeout(tmr);
-  if (!r || !r.length) return;
-  const { t } = live();
-  const before = [];
-  for (const x of r) {
-    if (!before.some(b => b.sid === x.sid && b.colId === x.colId)) { const c = getCell(t, x.sid, x.colId); before.push({ sid: x.sid, colId: x.colId, v: c ? c.v : null }); }
-    setCell(t, x.sid, x.colId, x.g);
-  }
-  save(); render();
-  undoBar(r.length === 1 ? '1 Note eingetragen' : r.length + ' Noten eingetragen', () => {
-    const { t: t2 } = live();
-    before.forEach(b => setCell(t2, b.sid, b.colId, b.v));
+  const apply = () => {
+    stop();
+    const lv = L(), t = lv.t;
+    const pick = QE.rows.filter(x => x.on && x.sid && x.kind !== 'scan' && (x.kind === 'sign' || GRADE_RE.test(x.g)));
+    if (!pick.length) { msg.textContent = 'Nichts abgehakt.'; return; }
+    const before = [];
+    for (const x of pick) {
+      const key = x.kind === 'sign' ? x.colId + ':s' : x.colId;
+      if (!before.some(b => b.sid === x.sid && b.key === key)) { const c = getCell(t, x.sid, key); before.push({ sid: x.sid, key, v: c ? c.v : null }); }
+      setCell(t, x.sid, key, x.kind === 'sign' ? true : x.g);
+    }
+    ta.value = ''; QE.rows = QE.rows.filter(x => x.kind === 'scan' && !x.done); answer.hidden = true; msg.textContent = '';
     save(); render();
-  });
+    const nG = pick.filter(x => x.kind === 'grade').length, nS = pick.length - nG;
+    undoBar([nG ? nG + (nG === 1 ? ' Note' : ' Noten') : '', nS ? nS + (nS === 1 ? ' Unterschrift' : ' Unterschriften') : ''].filter(Boolean).join(' und ') + ' eingetragen', () => {
+      const lv2 = qeLive() || lv;
+      before.forEach(b => setCell(lv2.t, b.sid, b.key, b.v));
+      save(); render();
+    });
+  };
+  const okBtn = iconBtn('check', 'Abgehakte Einträge übernehmen', apply); okBtn.classList.add('primary');
+  QE.el = h('div', { class: 'qpanel' },
+    h('div', { class: 'qhead' }, iconBtn('close', 'Schnelleingabe schließen', () => { quickClose(); render(); }), h('b', {}, 'Schnelleingabe'), colSel, okBtn),
+    ta, tools, answer, box, kiBox);
+  draw();
+  return QE.el;
+}
+
+function undoBar(text, undo) {
+  document.querySelectorAll('.undobar').forEach(b => b.remove());
+  const bar = h('div', { class: 'undobar', role: 'status' }, h('span', {}, text));
+  bar.append(h('button', { type: 'button', class: 'small', onclick: () => { bar.remove(); undo(); } }, 'Rückgängig'),
+    iconBtn('close', 'Hinweis schließen', () => bar.remove()));
+  document.body.append(bar);
+  setTimeout(() => bar.remove(), 30000);
 }
 
 /* ---------- Schüler ---------- */
@@ -1529,8 +1648,11 @@ function renderGrades(panel, cls, tab) {
         longPress(h('button', { class: v === view ? 'active' : '', 'aria-pressed': String(v === view), 'aria-label': label, title: 'Lange drücken: Noten verdecken oder anzeigen' },
           h('span', { class: 'wide' }, label), h('span', { class: 'narrow' }, short)), () => setView(v), () => { rowView.mask = !rowView.mask; render(); }))),
     h('span', { class: 'grow' }),
-    cls.students.length && tab.columns.length ? iconBtn('voice', 'Schnelleingabe: Noten tippen oder diktieren', () => quickEntry(cls, tab)) : null,
+    cls.students.length && tab.columns.length ? iconBtn('voice', 'Schnelleingabe: Noten tippen oder diktieren', () => quickToggle(cls, tab)) : null,
     iconBtn('export', 'CSV-Export', () => exportCsv(cls, tab, view))));
+  if (QE && QE.tabId === tab.id) {
+    if (tab.columns.length && cls.students.length) { panel.append(quickPanel(cls, tab)); Promise.resolve().then(quickMark); } else quickClose();
+  }
   if (!cls.students.length) { panel.append(h('div', { class: 'empty' }, 'Zuerst im Reiter „Schüler“ Namen anlegen oder importieren.')); return; }
   if (view !== 'J' && !cols.length) panel.append(h('p', { class: 'hint' }, 'Im ' + view + '. Halbjahr gibt es noch keine Leistung. Mit dem „+“ rechts eine Spalte anlegen (z. B. Klassenarbeit 1). Noten als 1–6 eingeben, optional mit + oder − (z. B. 2+).'));
 
@@ -1556,7 +1678,7 @@ function renderGrades(panel, cls, tab) {
         const c = getCell(tab, st.id, col.id);
         const ts = h('span', { class: 'ts' }, tsText(c));
         const inp = h('input', { type: 'text', class: 'grade', value: c ? c.v : '', maxlength: 2, autocomplete: 'off', inputmode: 'text',
-          'data-col': col.id, 'data-g': c ? c.v[0] : '', title: tsTitle(c), 'aria-label': col.name + ' – ' + st.name });
+          'data-col': col.id, 'data-sid': st.id, 'data-g': c ? c.v[0] : '', title: tsTitle(c), 'aria-label': col.name + ' – ' + st.name });
         inp.addEventListener('change', () => {
           const v = inp.value.trim().replace(/\s/g, '').replace(/[−–]/g, '-');
           if (v !== '' && !GRADE_RE.test(v)) { inp.classList.add('bad'); inp.title = 'Ungültig – erlaubt sind 1 bis 6, optional mit + oder −'; return; }
@@ -1578,7 +1700,7 @@ function renderGrades(panel, cls, tab) {
         let sig = null, sigTs = null;
         if (col.sign) {
           const key = col.id + ':s';
-          sig = h('button', { class: 'sig', type: 'button', 'aria-label': 'Unterschrift ' + col.name + ' – ' + st.name }, '✓');
+          sig = h('button', { class: 'sig', type: 'button', 'data-col': col.id, 'data-sid': st.id, 'aria-label': 'Unterschrift ' + col.name + ' – ' + st.name }, '✓');
           sigTs = h('span', { class: 'ts sigts' });
           const paint = () => {
             const s = getCell(tab, st.id, key);
@@ -2021,6 +2143,33 @@ function scanForget(names) {
   try { localStorage.setItem(SCAN_DEL_KEY, JSON.stringify((readJson(SCAN_DEL_KEY) || []).concat(names))); } catch (e) {}
   scanStore('readwrite', s => { names.forEach(n => s.delete(n)); }).catch(() => {}).then(() => scanSync());
 }
+async function scanJpeg(cv) {
+  const blob = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.8));
+  if (!blob) throw new Error('Das Bild konnte nicht verkleinert werden.');
+  return blob.arrayBuffer();
+}
+/* Wie ein Scanner: Papier wird weiß, Schrift kräftiger. Farben (z. B. Rotstift) bleiben erhalten. */
+function scanClean(cv) {
+  const ctx = cv.getContext('2d'), im = ctx.getImageData(0, 0, cv.width, cv.height), d = im.data, n = d.length / 4;
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < d.length; i += 4) hist[(d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8]++;
+  let lo = 0, hi = 255, acc = 0;
+  while (lo < 254 && (acc += hist[lo]) < n * 0.01) lo++;
+  acc = 0;
+  while (hi > 1 && (acc += hist[hi]) < n * 0.15) hi--;   // das hellste Sechstel gilt als Papier
+  if (hi < 60) return;                       // sehr dunkles Bild: lieber unverändert lassen
+  lo = Math.max(0, Math.min(lo, hi - 110));  // Papier fast einfarbig: Schrift trotzdem dunkel halten
+  // Farbstich des Papiers ausgleichen (z. B. gelbes Licht), dann Papier → weiß
+  const sum = [0, 0, 0]; let cnt = 0;
+  for (let i = 0; i < d.length; i += 4) if (((d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8) >= hi) { sum[0] += d[i]; sum[1] += d[i + 1]; sum[2] += d[i + 2]; cnt++; }
+  const luts = sum.map(s => {
+    const paper = cnt ? Math.max(1, s / cnt) : hi, k = hi / paper, lut = new Uint8ClampedArray(256);
+    for (let v = 0; v < 256; v++) lut[v] = Math.pow(Math.max(0, v * k - lo) / (hi - lo), 1.15) * 255;
+    return lut;
+  });
+  for (let i = 0; i < d.length; i += 4) { d[i] = luts[0][d[i]]; d[i + 1] = luts[1][d[i + 1]]; d[i + 2] = luts[2][d[i + 2]]; }
+  ctx.putImageData(im, 0, 0);
+}
 async function scanShrink(file) {
   const url = URL.createObjectURL(file);
   try {
@@ -2030,22 +2179,50 @@ async function scanShrink(file) {
     const cv = document.createElement('canvas');
     cv.width = Math.round(img.naturalWidth * k); cv.height = Math.round(img.naturalHeight * k);
     cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-    const blob = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.8));
-    if (!blob) throw new Error('Das Bild konnte nicht verkleinert werden.');
-    return blob.arrayBuffer();
+    scanClean(cv);
+    return scanJpeg(cv);
   } finally { URL.revokeObjectURL(url); }
+}
+/* PDF (z. B. aus „Dokumente scannen“ am iPhone/iPad): jede Seite wird zu einem Bild. */
+const PDFJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+async function scanPdf(file) {
+  if (!window.pdfjsLib) {
+    try { await loadScript(PDFJS_URL); } catch (e) { throw new Error('PDFs lassen sich nur mit Internet übernehmen.'); }
+  }
+  pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_URL.replace('pdf.min.js', 'pdf.worker.min.js');
+  const doc = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  const out = [];
+  for (let i = 1; i <= doc.numPages; i++) {
+    const pg = await doc.getPage(i), v1 = pg.getViewport({ scale: 1 });
+    const vp = pg.getViewport({ scale: Math.min(4, 2000 / Math.max(v1.width, v1.height)) });
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
+    const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+    await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+    out.push(await scanJpeg(cv));
+  }
+  return out;
 }
 async function scanAdd(cls, tab, st, col, files) {
   // Neutraler Dateiname: Die Zuordnung steht im Notenbuch (über feste Kennungen), nicht im Namen.
   // So bleibt alles richtig, wenn Klasse, Fach, Leistung oder Schüler umbenannt oder verschoben werden.
   for (const f of files) {
-    const buf = await scanShrink(f), id = uid();
-    const name = 'scan-' + id + '.jpg';
-    await scanStore('readwrite', s => s.put(buf, name));   // erst sicher ablegen, dann eintragen
-    setCell(tab, st.id, col.id + ':d:' + id, name);
-    save();
+    const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '');
+    for (const buf of isPdf ? await scanPdf(f) : [await scanShrink(f)]) {
+      const id = uid(), name = 'scan-' + id + '.jpg';
+      await scanStore('readwrite', s => s.put(buf, name));   // erst sicher ablegen, dann eintragen
+      setCell(tab, st.id, col.id + ':d:' + id, name);
+      save();
+    }
   }
   scanSync();
+}
+/* Drehung je Seite: eigene Zelle „<Spalte>:r:<Seite>“ (90/180/270), das Bild selbst bleibt unverändert. */
+function scanDraw(cv, img, deg) {
+  const r = ((deg % 360) + 360) % 360, side = r === 90 || r === 270, w = img.naturalWidth, hgt = img.naturalHeight;
+  cv.width = side ? hgt : w; cv.height = side ? w : hgt;
+  const ctx = cv.getContext('2d');
+  ctx.translate(cv.width / 2, cv.height / 2); ctx.rotate(r * Math.PI / 180); ctx.drawImage(img, -w / 2, -hgt / 2);
 }
 /* Wartende Bilder hochladen und entfernte Dateien in der OneDrive löschen. */
 async function scanSync() {
@@ -2096,20 +2273,26 @@ async function scanDialog(cls, tab, st, col, onChange) {
   const box = h('div', {}), busy = h('span', { class: 'hint' }), urls = [];
   const draw = () => {
     const pages = scanPages(tab, st.id, col.id);
-    if (!pages.length) { box.replaceChildren(h('p', { class: 'hint' }, 'Noch kein Scan. Mit der Kamera ein Foto aufnehmen oder vorhandene Bilder auswählen.')); return; }
+    if (!pages.length) { box.replaceChildren(h('p', { class: 'hint' }, 'Noch kein Scan. Oben auf „Dokument scannen“ tippen.')); return; }
     box.replaceChildren(...pages.map((p, i) => {
-      const img = h('img', { alt: 'Seite ' + (i + 1) });
+      const img = new Image();
+      const cv = h('canvas', { role: 'img', 'aria-label': 'Seite ' + (i + 1) });
       const note = h('p', { class: 'hint' }, 'Wird geladen …');
       const state = h('span', {});
+      const rkey = p.key.replace(':d:', ':r:');
+      const deg = () => +((getCell(tab, st.id, rkey) || {}).v || 0);
+      const turn = by => { const v = (deg() + by + 360) % 360; setCell(tab, st.id, rkey, v || null); save(); if (img.naturalWidth) scanDraw(cv, img, v); };
+      const rot = (name, label, by) => { const b = iconBtn(name, label, () => turn(by)); return b; };
       const fig = h('div', { class: 'scanpg' },
-        h('div', { class: 'scanhead' }, h('span', {}, 'Seite ' + (i + 1) + ' von ' + pages.length, state),
+        h('div', { class: 'scanhead' }, h('span', { class: 'grow' }, 'Seite ' + (i + 1) + ' von ' + pages.length, state),
+          rot('rotl', 'Nach links drehen', -90), rot('rotr', 'Nach rechts drehen', 90),
           iconBtn('trash', 'Seite entfernen', async () => {
             if (!await confirmDlg('Seite entfernen', 'Seite ' + (i + 1) + ' von ' + st.name + ' endgültig entfernen?')) return;
-            setCell(tab, st.id, p.key, null); save(); scanForget([p.name]); draw(); onChange();
+            setCell(tab, st.id, p.key, null); setCell(tab, st.id, rkey, null); save(); scanForget([p.name]); draw(); onChange();
           })),
-        note, h('div', { class: 'scanimg' }, img));
-      img.addEventListener('click', () => fig.classList.toggle('zoom'));
-      img.onload = () => note.remove();
+        note, h('div', { class: 'scanimg' }, cv));
+      cv.addEventListener('click', () => fig.classList.toggle('zoom'));
+      img.onload = () => { note.remove(); scanDraw(cv, img, deg()); };
       img.onerror = () => { note.textContent = 'Das Bild konnte nicht geladen werden.'; };
       scanUrl(p.name).then(u => {
         if (u.local) { urls.push(u.url); state.textContent = ' · wartet auf OneDrive'; }
@@ -2119,7 +2302,7 @@ async function scanDialog(cls, tab, st, col, onChange) {
     }));
   };
   const pick = camera => {
-    const inp = h('input', { type: 'file', accept: 'image/*', hidden: true, multiple: !camera, capture: camera ? 'environment' : null });
+    const inp = h('input', { type: 'file', accept: camera ? 'image/*' : 'application/pdf,image/*', hidden: true, multiple: !camera, capture: camera ? 'environment' : null });
     inp.addEventListener('change', async () => {
       const files = [...inp.files]; inp.remove();
       if (!files.length) return;
@@ -2132,7 +2315,9 @@ async function scanDialog(cls, tab, st, col, onChange) {
   draw();
   await dlg('Scan – ' + st.name, h('div', {},
     h('p', { class: 'hint' }, cls.name + ' · ' + tab.name + ' · ' + col.name + (auth ? '' : ' – nicht bei OneDrive angemeldet: Die Scans liegen vorerst nur auf diesem Gerät.')),
-    h('div', { class: 'scantools' }, iconBtn('camera', 'Foto aufnehmen', () => pick(true)), iconBtn('image', 'Bilder auswählen', () => pick(false)), busy),
+    h('div', { class: 'scantools' }, h('button', { type: 'button', class: 'primary', onclick: () => pick(false) }, 'Dokument scannen'),
+      iconBtn('camera', 'Mit der Kamera aufnehmen (wird wie ein Scan aufgehellt)', () => pick(true)), busy),
+    h('p', { class: 'hint' }, 'Im Auswahlmenü „Dokumente scannen“ wählen – oder in der Dateien- bzw. Notizen-App scannen und das PDF hier auswählen. Alle Seiten werden übernommen.'),
     box), [{ label: 'Schließen', value: null }]);
   urls.forEach(u => URL.revokeObjectURL(u));
   onChange();
