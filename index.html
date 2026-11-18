@@ -1561,6 +1561,8 @@ async function login(silent) {
   const p = new URLSearchParams({ client_id: CLIENT_ID, response_type: 'code', redirect_uri: REDIRECT, response_mode: 'query',
     scope: SCOPE, state, code_challenge: challenge, code_challenge_method: 'S256' });
   if (silent) p.set('prompt', 'none');
+  // Nach dem Abmelden fragt Microsoft, welches Konto gemeint ist – so lässt sich das Konto wechseln.
+  else if (!auth) p.set('prompt', 'select_account');
   location.assign(AUTH_URL + 'authorize?' + p);
 }
 async function tokenRequest(params) {
@@ -1986,7 +1988,7 @@ let pendingRender = false;
 async function syncDialog() {
   const info = h('p', { class: 'hint' });
   const describe = () => {
-    if (!auth) info.textContent = 'Nicht angemeldet. Die Daten liegen nur auf diesem Gerät.';
+    if (!auth) info.textContent = 'Nicht angemeldet. Die Daten liegen nur auf diesem Gerät. Beim Anmelden fragt Microsoft, welches Konto du verwenden möchtest.';
     else if (auth.needLogin || syncState === 'login') info.textContent = 'Die Anmeldung ist abgelaufen. Bitte erneut anmelden; deine Einträge bleiben erhalten.';
     else if (auth.needPw) info.textContent = PW_MSG;
     else if (syncState === 'error') info.textContent = 'Fehler beim Abgleich: ' + syncMsg;
