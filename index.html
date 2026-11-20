@@ -1916,7 +1916,7 @@ function renderGrades(panel, cls, tab) {
           h('span', { class: 'wide' }, label), h('span', { class: 'narrow' }, short)), () => setView(v), () => { rowView.mask = !rowView.mask; render(); }))),
     h('span', { class: 'grow' }),
     cls.students.length && tab.columns.length ? iconBtn('voice', 'Schnelleingabe: Noten tippen oder diktieren', () => quickToggle(cls, tab)) : null,
-    auth ? iconBtn('inbox', 'Korrekturen holen', fetchCorrections) : null,
+    auth ? iconBtn('inbox', 'Korrektur anstoßen und Ergebnisse holen', () => fetchCorrections(cls, tab)) : null,
     iconBtn('export', 'CSV-Export', () => exportCsv(cls, tab, view))));
   if (QE && QE.tabId === tab.id) {
     if (tab.columns.length && cls.students.length) { panel.append(quickPanel(cls, tab)); Promise.resolve().then(quickMark); } else quickClose();
@@ -3432,11 +3432,54 @@ async function inboxPages(item) {
   const blob = await r.blob();
   return /\.pdf$/i.test(item.name) ? scanPdf(blob) : [await scanShrink(blob)];
 }
-async function fetchCorrections() {
-  if (!auth) { alert('Zum Holen der Korrekturen bitte zuerst bei OneDrive anmelden.'); return; }
-  if (!navigator.onLine) { alert('Ohne Internet lassen sich keine Korrekturen holen.'); return; }
+/* Korrektur anstoßen: Das Notenbuch legt je Leistung einen Auftrag in den App-Ordner
+   („Korrektur-Auftraege“). Claude am Laptop findet ihn, sortiert die Seiten in OneDrive\Klausuren,
+   korrigiert und legt die Vorschläge in den Eingang. Seiten, die noch auf diesem Gerät warten,
+   werden vorher hochgeladen. */
+const ORDERS = 'https://graph.microsoft.com/v1.0/me/drive/special/approot:/' + (IS_TEST ? 'Korrektur-Auftraege-Test' : 'Korrektur-Auftraege') + '/';
+async function orderCorrection(cls, tab, col) {
+  const studs = cls.students.map((s, i) => ({ s, kz: 'S' + (i + 1), pages: scanPages(tab, s.id, col.id) })).filter(x => x.pages.length);
+  if (!studs.length) throw new Error('Noch keine Arbeit gescannt.');
+  const names = new Set(studs.flatMap(x => x.pages.map(p => p.name)).concat(((col.exam && col.exam.sol) || []).map(s => s.name)));
+  for (let i = 0; i < 5; i++) {   // erst alle Seiten in die OneDrive bringen
+    const wait = (await scanStore('readonly', s => s.getAllKeys())).filter(n => names.has(n));
+    if (!wait.length) break;
+    if (i === 4) throw new Error(wait.length + ' Seiten sind noch nicht in der OneDrive. Bitte mit Internet kurz warten und noch einmal.');
+    await scanSync(); await new Promise(r => setTimeout(r, 2500));
+  }
+  const ex = col.exam || {};
+  const order = {
+    version: 1, at: nowIso(),
+    klasse: { id: cls.id, name: cls.name }, fach: { id: tab.id, name: tab.name }, leistung: { id: col.id, name: col.name },
+    exam: { text: ex.text || '', tasks: ex.tasks || [], musterloesung: (ex.sol || []).map(s => ({ datei: s.name, drehung: s.r || 0 })) },
+    schueler: studs.map(x => ({ id: x.s.id, name: x.s.name, kuerzel: x.kz,
+      seiten: x.pages.map(p => ({ datei: p.name, drehung: +((getCell(tab, x.s.id, p.key.replace(':d:', ':r:')) || {}).v || 0) })) }))
+  };
+  const r = await fetch(ORDERS + encodeURIComponent(col.id) + '.json:/content', { method: 'PUT',
+    headers: { Authorization: 'Bearer ' + await getToken(), 'Content-Type': 'application/json' }, body: JSON.stringify(order, null, 1) });
+  if (!r.ok) throw await httpError(r);
+  col.ordered = nowIso(); col.m = nowIso(); save();
+  return studs.length;
+}
+async function fetchCorrections(cls, tab) {
+  if (!auth) { alert('Zum Korrigieren bitte zuerst bei OneDrive anmelden.'); return; }
+  if (!navigator.onLine) { alert('Ohne Internet geht das gerade nicht.'); return; }
   const msg = h('p', { class: 'hint' }, 'Suche im OneDrive …'), box = h('div', {});
-  const p = dlg('Korrekturen holen', h('div', {}, msg, box), [{ label: 'Schließen', value: null }]);
+  // Oben: Korrektur je Leistung dieses Fachs anstoßen (nur Leistungen mit Scans)
+  const cols = tab ? tab.columns.filter(c => c.scan) : [];
+  const orderBox = h('div', {}, cols.length ? cols.map(col => {
+    const n = cls.students.filter(s => scanPages(tab, s.id, col.id).length).length;
+    const st = h('span', { class: 'hint' }, n + ' von ' + cls.students.length + ' Arbeiten gescannt' + (col.ordered ? ' · angestoßen ' + fmtTs(col.ordered) : ''));
+    const btn = h('button', { type: 'button', class: 'primary', disabled: !n || !col.exam }, 'Anstoßen');
+    btn.addEventListener('click', async () => {
+      btn.disabled = true; st.textContent = 'Wird übergeben …';
+      try { const k = await orderCorrection(cls, tab, col); st.textContent = k + ' Arbeiten übergeben. Claude korrigiert am Laptop; danach hier unten „Holen“.'; btn.textContent = '✓'; }
+      catch (e) { st.textContent = e.message; btn.disabled = false; }
+    });
+    return h('div', { class: 'exrow inboxrow' }, h('span', { class: 'grow' }, h('b', {}, col.name), h('br'), col.exam ? st : h('span', { class: 'hint' }, 'Zuerst in der Leistung „Mit Punkten korrigieren“ einschalten und die Musterlösung ablegen.')), btn);
+  }) : h('p', { class: 'hint' }, 'In diesem Fach hat noch keine Leistung „Scans ablegen“.'));
+  const p = dlg('Korrektur', h('div', {}, h('h3', { class: 'sec' }, 'Korrektur anstoßen'), orderBox,
+    h('h3', { class: 'sec low' }, 'Ergebnisse holen'), msg, box), [{ label: 'Schließen', value: null }]);
   try {
     const token = await getToken();
     const items = await inboxList(token);
@@ -3474,8 +3517,9 @@ async function importCorrection(j, progress) {
     tab.columns.push(col);
   }
   col.scan = true;
-  if (job.exam && (!col.exam || !col.exam.tasks.length))
-    col.exam = { text: job.exam.text || '', tasks: job.exam.tasks.map(t => ({ id: String(t.id), name: String(t.name), max: +t.max || 0, exp: String(t.exp || '') })), sol: [], key: EXAM_KEY.slice(), tend: false };
+  const noPts = () => !cls.students.some(s => getCell(tab, s.id, col.id + ':p'));   // Aufgaben nur ersetzen, solange niemand Punkte hat
+  if (job.exam && (!col.exam || !col.exam.tasks.length || (job.exam.ersetzen && noPts())))
+    col.exam = Object.assign({ sol: [], key: EXAM_KEY.slice(), tend: false }, col.exam || {}, { text: (col.exam && col.exam.text) || job.exam.text || '', tasks: job.exam.tasks.map(t => ({ id: String(t.id), name: String(t.name), max: +t.max || 0, exp: String(t.exp || '') })) });
   if (!col.exam) throw new Error('Für diese Leistung gibt es keinen Erwartungshorizont.');
   col.m = nowIso(); save();
   const used = [], missing = [];
