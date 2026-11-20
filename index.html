@@ -329,6 +329,16 @@ body.drawer-open #drawerShade { opacity: 1; pointer-events: auto; }
 button.iconbtn.corner { position: absolute; top: -18px; right: -10px; z-index: 3; box-shadow: var(--shadow); }
 .dlg-actions .left { margin-right: auto; }
 .catrow { display: grid; grid-template-columns: 1fr 90px auto; gap: 8px; margin-bottom: 8px; align-items: center; }
+/* Eigene Noten-Tasten auf iPhone/iPad statt der Bildschirmtastatur */
+.gpad { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; background: var(--head); border-top: 1px solid var(--line); box-shadow: 0 -6px 18px rgba(0,0,0,.08);
+  padding: 8px 8px calc(8px + env(safe-area-inset-bottom)); display: none; -webkit-user-select: none; user-select: none; touch-action: manipulation; }
+.gpad.on { display: block; }
+.gpad .row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; max-width: 560px; margin: 0 auto; }
+.gpad .row + .row { margin-top: 6px; grid-template-columns: 1fr 1fr 1fr 1.5fr 1.5fr; }
+.gpad button { height: 50px; font-size: 22px; font-weight: 700; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 0; }
+.gpad button:active { background: var(--soft); }
+.gpad button.ok { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+body.gpad-open { padding-bottom: 130px; }
 </style>
 </head>
 <body>
@@ -590,6 +600,51 @@ function confirmDlg(title, text, okLabel) {
 
 /* ---------- Noten ---------- */
 const GRADE_RE = /^[1-6][+-]?$/;
+// Auf Touch-Geräten (iPhone/iPad) erscheinen beim Antippen eines Notenfeldes eigene Noten-Tasten
+// statt der Bildschirmtastatur. Die Tasten setzen nur den Feldinhalt und lösen dieselbe
+// Speicherung aus wie eine Eingabe über die Tastatur. Am Laptop bleibt alles wie bisher.
+const GRADE_PAD = matchMedia('(pointer: coarse)').matches;
+let gpad = null, gpadInp = null;
+function gradePad() {
+  if (gpad) return gpad;
+  const key = (label, aria, cls) => h('button', { type: 'button', class: cls || null, 'aria-label': aria || label, 'data-k': label }, label);
+  const commit = () => { if (gpadInp) gpadInp.dispatchEvent(new Event('change', { bubbles: true })); };
+  const put = v => { if (!gpadInp) return; gpadInp.value = v; commit(); };
+  const tend = s => { const d = gpadInp.value[0] || ''; if (!/[1-6]/.test(d)) return; put(gpadInp.value === d + s ? d : d + s); };
+  const act = {
+    '+': () => tend('+'), '−': () => tend('-'), '⌫': () => put(''),
+    '↓': () => gpadInp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })),
+    '✓': () => { const t = gpadInp; hidePad(); t.blur(); }
+  };
+  gpad = h('div', { class: 'gpad', role: 'group', 'aria-label': 'Noten-Tasten' },
+    h('div', { class: 'row' }, ['1', '2', '3', '4', '5', '6'].map(n => key(n))),
+    h('div', { class: 'row' }, key('+', 'Plus'), key('−', 'Minus'), key('⌫', 'Löschen'),
+      key('↓', 'Nächster Schüler'), key('✓', 'Fertig', 'ok')));
+  // Tasten dürfen das Feld nicht verlassen: Fokus bleibt im Notenfeld.
+  gpad.addEventListener('mousedown', e => e.preventDefault());
+  gpad.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    const b = e.target.closest('button'); if (!b || !gpadInp) return;
+    const k = b.dataset.k;
+    if (/^[1-6]$/.test(k)) put(k); else act[k]();
+  });
+  document.body.append(gpad);
+  return gpad;
+}
+function hidePad() { if (gpad) gpad.classList.remove('on'); document.body.classList.remove('gpad-open'); gpadInp = null; }
+if (GRADE_PAD) {
+  document.addEventListener('focusin', e => {
+    const t = e.target;
+    if (!(t instanceof HTMLInputElement) || !t.matches('td.cell input.grade')) return;
+    gpadInp = t;
+    gradePad().classList.add('on'); document.body.classList.add('gpad-open');
+    setTimeout(() => { if (gpadInp === t) t.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 50);
+  });
+  document.addEventListener('focusout', e => {
+    const t = e.target;
+    setTimeout(() => { if (gpadInp === t && document.activeElement !== t && !(document.activeElement && document.activeElement.matches && document.activeElement.matches('td.cell input.grade'))) hidePad(); }, 0);
+  });
+}
 function gradeVal(v) {
   let n = +v[0];
   const t = S.settings.tendency;
@@ -1848,7 +1903,7 @@ function renderGrades(panel, cls, tab) {
       cols.map(col => {
         const c = getCell(tab, st.id, col.id);
         const ts = h('span', { class: 'ts' }, tsText(c));
-        const inp = h('input', { type: 'text', class: 'grade', value: c ? c.v : '', maxlength: 2, autocomplete: 'off', inputmode: 'text',
+        const inp = h('input', { type: 'text', class: 'grade', value: c ? c.v : '', maxlength: 2, autocomplete: 'off', inputmode: GRADE_PAD ? 'none' : 'text',
           'data-col': col.id, 'data-sid': st.id, 'data-g': c ? c.v[0] : '', title: tsTitle(c), 'aria-label': col.name + ' – ' + st.name });
         inp.addEventListener('change', () => {
           const v = inp.value.trim().replace(/\s/g, '').replace(/[−–]/g, '-');
