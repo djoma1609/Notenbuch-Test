@@ -199,6 +199,9 @@ button.sig.on { background: var(--good); border: 1.5px solid var(--good); color:
 button.scn { width: 26px; height: 26px; padding: 0; border-radius: 7px; font-size: 12px; font-weight: 600; line-height: 1; flex: none; display: inline-flex; align-items: center; justify-content: center; color: #a39d92; border: 1.5px dashed #b9b4aa; background: transparent; }
 button.scn.on { background: var(--soft); border: 1.5px solid var(--accent); color: var(--accent); }
 .scantools { display: flex; align-items: center; gap: 10px; margin: 4px 0 12px; }
+button.pts { min-width: 26px; height: 26px; padding: 0 5px; border-radius: 7px; font-size: 12px; font-weight: 600; line-height: 1; flex: none; color: #a39d92; border: 1.5px dashed #b9b4aa; background: transparent; }
+button.pts.on { background: var(--soft); border: 1.5px solid var(--accent); color: var(--accent); }
+button.pts.ki { border-style: solid; color: var(--accent); }
 .scanpg { border: 1px solid var(--line); border-radius: 10px; margin: 0 0 14px; overflow: hidden; background: var(--panel); }
 .scanhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 4px 12px; font-size: 13px; color: var(--muted); }
 .scanimg { overflow: auto; max-height: 75vh; }
@@ -339,6 +342,42 @@ button.iconbtn.corner { position: absolute; top: -18px; right: -10px; z-index: 3
 .gpad button:active { background: var(--soft); }
 .gpad button.ok { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
 body.gpad-open { padding-bottom: 130px; }
+/* Klausur korrigieren */
+.exrow { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.exrow .grow { flex: 1; min-width: 0; }
+.exrow input[type=text]:first-child { flex: 1; min-width: 0; }
+.extask { border-top: 1px solid var(--line); padding: 8px 0; }
+.extask textarea { width: 100%; box-sizing: border-box; }
+input.exmax, input.expts { width: 4.2em; flex: none; text-align: center; }
+input.expts.bad, .exam input.grade.bad { outline: 2px solid var(--bad); }
+.exkey { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.exkey label { display: flex; align-items: center; gap: 4px; font-size: 14px; }
+.exkey input { width: 3.4em; text-align: center; }
+.exsum { margin: 6px 0; }
+.exam input.grade { width: 3.2em; text-align: center; }
+.exkibar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
+.exki { font-size: 13px; background: var(--soft); border-radius: 8px; padding: 6px 8px; margin-top: 6px; display: flex; gap: 8px; align-items: flex-start; }
+.exki span:first-child { flex: 1; }
+.exki.unsure { background: #fff3d6; }
+.exexp summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.exexp div { white-space: pre-wrap; font-size: 13px; padding: 4px 0; }
+button.expin { padding: 4px 8px; opacity: .45; }
+button.expin.on { opacity: 1; }
+button.expin.active { outline: 2px solid var(--accent); opacity: 1; }
+.explace { color: var(--accent); font-weight: 600; }
+.expages canvas { width: 100%; height: auto; display: block; cursor: crosshair; }
+dialog.dlg.examdlg { width: min(1100px, calc(100vw - 16px)); max-height: calc(100vh - 16px); }
+@media (min-width: 860px) {
+  .exam { display: grid; grid-template-columns: minmax(300px, 380px) 1fr; gap: 18px; align-items: start; }
+  .exright { max-height: calc(100vh - 170px); overflow: auto; }
+}
+.handgrid { display: grid; gap: 6px; }
+.handrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.handrow b { width: 2.6em; flex: none; text-align: center; }
+.handcell { display: inline-flex; align-items: flex-start; }
+.handcell .iconbtn { width: 28px; height: 28px; }
+canvas.handpad { border: 1px solid var(--line); border-radius: 8px; background: #fff; touch-action: none; }
+canvas.handprev { width: 100%; max-width: 640px; height: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
 </style>
 </head>
 <body>
@@ -492,6 +531,7 @@ function mergeState(a, b) {
   if (sNew.name != null) out.settings.name = sNew.name;
   if (sNew.halfWeights) out.settings.halfWeights = sNew.halfWeights;
   if (sNew.fontsOff) out.settings.fontsOff = sNew.fontsOff;
+  if (sNew.hand) out.settings.hand = sNew.hand;
   if ((b.lastBackup || '') > (a.lastBackup || '')) out.lastBackup = b.lastBackup;
   return out;
 }
@@ -957,7 +997,7 @@ function confirmByName(title, text, name) {
 }
 async function deleteClass(cls) {
   if (!await confirmByName('Klasse löschen', 'Klasse „' + cls.name + '“ mit allen Schülern, Noten und Listen endgültig löschen?', cls.name)) return;
-  scanForget(cls.tabs.flatMap(t => scanNames(t, () => true)));
+  scanForget(cls.tabs.flatMap(t => scanNames(t, () => true).concat(t.columns ? examSolNames(t) : [])));
   S.classes = S.classes.filter(c => c !== cls); markDeleted(cls.id); save(); render();
 }
 async function addTab() {
@@ -983,7 +1023,7 @@ async function renameTab(tab) {
 }
 async function deleteTab(cls, tab) {
   if (!await confirmByName('Reiter löschen', 'Reiter „' + tab.name + '“ mit allen Einträgen endgültig löschen?', tab.name)) return;
-  scanForget(scanNames(tab, () => true));
+  scanForget(scanNames(tab, () => true).concat(tab.columns ? examSolNames(tab) : []));
   cls.tabs = cls.tabs.filter(t => t !== tab); markDeleted(tab.id); S.ui.tabId = 'students'; save(); render();
 }
 function tsToggle() {
@@ -1892,7 +1932,7 @@ function renderGrades(panel, cls, tab) {
   const thead = h('thead', {}, h('tr', {},
     nameHead(),
     cols.map(col => h('th', {}, h('button', { class: 'colbtn', title: 'Leistung bearbeiten', onclick: () => editColumn(tab, col, view) },
-      col.name, h('small', {}, catName(col.catId) + (col.factor !== 1 ? ' · ×' + String(col.factor).replace('.', ',') : '') + (col.sign ? ' · Unterschrift' : '')), createdNote(col)))),
+      col.name, h('small', {}, catName(col.catId) + (col.factor !== 1 ? ' · ×' + String(col.factor).replace('.', ',') : '') + (col.sign ? ' · Unterschrift' : '') + (col.exam ? ' · ' + fmtP(examMax(col.exam)) + ' P.' : '')), createdNote(col)))),
     defs.map(d => h('th', { class: d.final ? 'final' : 'calc' }, d.label, d.sub ? h('small', {}, d.sub) : null))));
   const shown = shownStudents(cls);
   const tbody = h('tbody', {}, shown.map(st => {
@@ -1951,7 +1991,15 @@ function renderGrades(panel, cls, tab) {
           scn.addEventListener('click', () => scanDialog(cls, tab, st, col, paintScn));
           paintScn();
         }
-        return h('td', { class: 'cell' }, h('span', { class: 'gwrap' }, inp, sig, scn), ts, sigTs);
+        // Korrektur mit Punkten (nur wenn ein Erwartungshorizont angelegt ist).
+        let pts = null;
+        if (col.exam) {
+          const sum = examSum(col.exam, examData(tab, st.id, col)), kv = getCell(tab, st.id, col.id + ':k');
+          pts = h('button', { class: 'pts' + (sum != null ? ' on' : kv ? ' ki' : ''), type: 'button', onclick: () => examFlow(cls, tab, st, col) }, sum != null ? fmtP(sum) : 'P');
+          const label = 'Korrigieren' + (sum != null ? ' (' + fmtP(sum) + ' Punkte)' : kv ? ' (Vorschlag der KI liegt vor)' : '') + ': ' + col.name + ' – ' + st.name;
+          pts.title = label; pts.setAttribute('aria-label', label);
+        }
+        return h('td', { class: 'cell' }, h('span', { class: 'gwrap' }, inp, sig, scn, pts), ts, sigTs);
       }), defTds);
   }));
   const tfoot = h('tfoot', {}, h('tr', {}, h('td', { class: 'name' }, 'Klassenschnitt'),
@@ -1975,30 +2023,39 @@ async function editColumn(tab, col, view) {
   const factor = h('input', { type: 'number', min: '0.1', step: '0.1', value: col ? col.factor : 1 });
   const sign = h('input', { type: 'checkbox', class: 'switch', role: 'switch', checked: !!(col && col.sign) });
   const scan = h('input', { type: 'checkbox', class: 'switch', role: 'switch', checked: !!(col && col.scan) });
+  const exam = h('input', { type: 'checkbox', class: 'switch', role: 'switch', checked: !!(col && col.exam) });
   const actions = [
     { label: 'Abbrechen', value: null },
     { label: isNew ? 'Anlegen' : 'Speichern', primary: true, fn: () => (name.value.trim() && +factor.value > 0) ? 'ok' : KEEP }
   ];
   if (!isNew) actions.unshift({ label: 'Leistung löschen', cls: 'danger left', value: 'del' });
+  if (!isNew && col.exam) actions.push({ label: 'Erwartungshorizont bearbeiten', value: 'exam' });
   const r = await dlg(isNew ? 'Neue Leistung' : 'Leistung bearbeiten',
     h('div', {}, field('Bezeichnung', name),
       field('Zählt zu (z. B. ein Referat zu den Klassenarbeiten)', cat),
       h('label', { class: 'switchrow' }, h('span', {}, 'Unterschrift abhaken', h('small', {}, 'Je Schüler einen Haken setzen, sobald die Unterschrift vorliegt')), sign),
       h('label', { class: 'switchrow' }, h('span', {}, 'Scans ablegen', h('small', {}, 'Je Schüler die fotografierte Arbeit ablegen (liegt in deinem OneDrive)')), scan),
+      h('label', { class: 'switchrow' }, h('span', {}, 'Mit Punkten korrigieren', h('small', {}, 'Erwartungshorizont mit Aufgaben und Punkten, Note nach Notenschlüssel; die KI kann die Scans vorab prüfen')), exam),
       field('Halbjahr', half),
       field('Gewichtung innerhalb des Bereichs (z. B. 2 = zählt doppelt)', factor)), actions);
   if (!r) return;
+  if (r === 'exam') return editExam(tab, col);
   if (r === 'del') {
     const scans = scanNames(tab, (sid, k) => k.startsWith(col.id + ':d:'));
+    if (col.exam && col.exam.sol) col.exam.sol.forEach(s => scans.push(s.name));
     if (!await confirmDlg('Leistung löschen', '„' + col.name + '“ mit allen eingetragenen Noten' + (scans.length ? ' und ' + scans.length + ' Scan-Seiten' : '') + ' löschen?')) return;
     tab.columns = tab.columns.filter(c => c !== col);
     markDeleted(col.id);
     scanForget(scans);
     Object.values(tab.cells).forEach(cells => { for (const k of Object.keys(cells)) if (k === col.id || k.startsWith(col.id + ':')) delete cells[k]; });
   } else if (isNew) {
-    tab.columns.push({ id: uid(), name: name.value.trim(), catId: cat.value, half: +half.value, factor: +factor.value, sign: sign.checked, scan: scan.checked, created: nowIso(), m: nowIso() });
+    const nc = { id: uid(), name: name.value.trim(), catId: cat.value, half: +half.value, factor: +factor.value, sign: sign.checked, scan: scan.checked, created: nowIso(), m: nowIso() };
+    tab.columns.push(nc);
+    if (exam.checked) { save(); render(); return editExam(tab, nc); }
   } else {
     col.name = name.value.trim(); col.catId = cat.value; col.half = +half.value; col.factor = +factor.value; col.sign = sign.checked; col.scan = scan.checked; col.m = nowIso();
+    if (exam.checked && !col.exam) { save(); render(); return editExam(tab, col); }
+    if (!exam.checked && col.exam && await confirmDlg('Erwartungshorizont entfernen', 'Erwartungshorizont von „' + col.name + '“ entfernen? Eingetragene Noten und Punkte bleiben.')) delete col.exam;
   }
   save(); render();
 }
@@ -2832,6 +2889,523 @@ function scanViewer(tab, st, col, start, imgs) {
   });
 }
 
+/* ---------- Klausur korrigieren ----------
+   Je Leistung ein Erwartungshorizont (col.exam): Aufgaben mit Höchstpunkten und erwarteter Lösung,
+   dazu ein Notenschlüssel (Mindestprozent je Note). Je Schüler stehen die Punkte in der Zelle
+   „<Spalte>:p“, ein Vorschlag der KI getrennt in „<Spalte>:k“. Punkte übernimmt und die Note trägt
+   nur die Lehrkraft ein. Punkte, Summe und Note werden in ihrer Handschrift über den Scan gelegt –
+   das Bild selbst bleibt unverändert. */
+const EXAM_KEY = [87, 73, 59, 45, 18];   // Mindestprozent für die Noten 1 bis 5, darunter 6
+const examMax = ex => ex.tasks.reduce((s, t) => s + (+t.max || 0), 0);
+const fmtP = n => String(Math.round(n * 2) / 2).replace('.', ',');
+const numP = s => { const v = parseFloat(String(s).replace(',', '.')); return isFinite(v) ? Math.round(v * 2) / 2 : null; };
+const examCopy = v => JSON.parse(JSON.stringify(v));
+function examData(tab, sid, col) { const c = getCell(tab, sid, col.id + ':p'); return c ? examCopy(c.v) : { p: {}, pos: {} }; }
+function examSum(ex, d) {
+  let s = 0, any = false;
+  for (const t of ex.tasks) if (d.p && d.p[t.id] != null) { s += d.p[t.id]; any = true; }
+  return any ? s : null;
+}
+function examGrade(ex, sum) {
+  const max = examMax(ex);
+  if (sum == null || !max) return '';
+  const pct = sum / max * 100, key = ex.key || EXAM_KEY;
+  let g = 6;
+  for (let i = 0; i < 5; i++) if (pct >= key[i]) { g = i + 1; break; }
+  if (!ex.tend) return String(g);
+  const hi = g === 1 ? 100 : key[g - 2], lo = g === 6 ? 0 : key[g - 1];
+  if (hi - lo <= 0) return String(g);
+  const r = (pct - lo) / (hi - lo);   // oberes Drittel „+“, unteres Drittel „−“
+  return g + (r >= 2 / 3 && g > 1 ? '+' : r < 1 / 3 && g < 6 ? '-' : '');
+}
+
+const examSolNames = tab => tab.columns.flatMap(c => ((c.exam && c.exam.sol) || []).map(s => s.name));
+async function editExam(tab, col, draft) {
+  const ex = draft || examCopy(col.exam || { text: '', tasks: [], key: EXAM_KEY.slice(), tend: false });
+  ex.sol = ex.sol || []; ex._added = ex._added || [];
+  if (!ex.tasks.length) ex.tasks.push({ id: uid(), name: 'Aufgabe 1', max: 4, exp: '' });
+  const list = h('div', {}), total = h('p', { class: 'hint' });
+  const sumUp = () => { total.textContent = 'Zusammen ' + fmtP(examMax(ex)) + ' Punkte'; };
+  const draw = () => {
+    list.replaceChildren(...ex.tasks.map((t, i) => h('div', { class: 'extask' },
+      h('div', { class: 'exrow' },
+        h('input', { type: 'text', value: t.name, 'aria-label': 'Aufgabe', oninput: e => { t.name = e.target.value; } }),
+        h('input', { type: 'text', inputmode: 'decimal', class: 'exmax', value: fmtP(t.max), 'aria-label': 'Höchstpunkte',
+          oninput: e => { t.max = numP(e.target.value) || 0; sumUp(); } }),
+        h('span', { class: 'hint' }, 'P.'),
+        iconBtn('trash', 'Aufgabe entfernen', () => { ex.tasks.splice(i, 1); draw(); })),
+      h('textarea', { rows: 3, value: t.exp || '', placeholder: 'Erwartete Lösung. Bei Rechenaufgaben die Schritte mit Punkten, z. B.: Ansatz 1 P., Umformen 1 P., Ergebnis x = 4 1 P.',
+        oninput: e => { t.exp = e.target.value; } }))));
+    sumUp();
+  };
+  draw();
+  const textTa = h('textarea', { rows: 4, value: ex.text || '', oninput: e => { ex.text = e.target.value; } });
+  // Musterlösung mit Erwartungen: Seiten liegen wie die Scans in der OneDrive, die KI liest sie bei jeder Prüfung mit.
+  const solBox = h('div', { class: 'exsol' }), solMsg = h('span', { class: 'hint' }), urls = [];
+  const readBtn = h('button', { type: 'button' }, '✦ Aufgaben daraus übernehmen');
+  const drawSol = () => {
+    solBox.replaceChildren(...ex.sol.map((s, i) => {
+      const cv = h('canvas', { role: 'img', 'aria-label': 'Musterlösung Seite ' + (i + 1) }), img = new Image();
+      img.onload = () => scanDraw(cv, img, s.r || 0);
+      scanBlobUrl(s.name).then(u => { urls.push(u); img.src = u; }).catch(e => { cv.replaceWith(h('p', { class: 'hint' }, e.message)); });
+      const turn = by => { s.r = ((s.r || 0) + by + 360) % 360; if (img.naturalWidth) scanDraw(cv, img, s.r); };
+      return h('div', { class: 'scanpg' },
+        h('div', { class: 'scanhead' }, h('span', { class: 'grow' }, 'Seite ' + (i + 1) + ' von ' + ex.sol.length),
+          iconBtn('rotl', 'Nach links drehen', () => turn(-90)), iconBtn('rotr', 'Nach rechts drehen', () => turn(90)),
+          iconBtn('trash', 'Seite entfernen', () => { ex.sol.splice(i, 1); drawSol(); })),
+        h('div', { class: 'scanimg' }, cv));
+    }));
+    readBtn.hidden = !ex.sol.length;
+  };
+  const pick = camera => {
+    const inp = h('input', { type: 'file', accept: camera ? 'image/*' : 'application/pdf,image/*', hidden: true, multiple: !camera, capture: camera ? 'environment' : null });
+    inp.addEventListener('change', async () => {
+      const files = [...inp.files]; inp.remove();
+      if (!files.length) return;
+      solMsg.textContent = 'Wird abgelegt …';
+      try {
+        for (const f of files) {
+          const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '');
+          for (const buf of isPdf ? await scanPdf(f) : [await scanShrink(f)]) {
+            const name = 'scan-' + uid() + '.jpg';
+            await scanStore('readwrite', s => s.put(buf, name));
+            ex.sol.push({ name, t: nowIso() }); ex._added.push(name);
+          }
+        }
+        solMsg.textContent = '';
+      } catch (e) { solMsg.textContent = 'Konnte nicht abgelegt werden: ' + e.message; }
+      drawSol();
+    });
+    solBox.after(inp); inp.click();
+  };
+  readBtn.addEventListener('click', async () => {
+    const key = (kiConf().key || '').trim();
+    if (!key) { solMsg.textContent = 'Dafür den Zugangsschlüssel in der Schnelleingabe unter „KI-Hilfe“ eintragen.'; return; }
+    const filled = ex.tasks.some(t => (t.exp || '').trim()) || ex.tasks.length > 1;
+    if (filled && !await confirmDlg('Aufgaben übernehmen', 'Die KI liest die Musterlösung und ersetzt die Aufgaben. Schon vergebene Punkte passen dann nicht mehr zu den Aufgaben. Weiter?', 'Ersetzen')) return;
+    readBtn.disabled = true; solMsg.textContent = 'Die KI liest die Musterlösung …';
+    try {
+      const o = await examReadSolution(ex, key);
+      const tasks = (o.aufgaben || []).map(a => ({ id: uid(), name: String(a.name || 'Aufgabe').trim(), max: Math.max(0, Math.round((+a.punkte || 0) * 2) / 2), exp: String(a.erwartung || '') }));
+      if (!tasks.length) throw new Error('Die KI hat keine Aufgaben gefunden.');
+      ex.tasks = tasks; draw();
+      if (!(ex.text || '').trim() && o.text) { ex.text = String(o.text); textTa.value = ex.text; }
+      solMsg.textContent = tasks.length + ' Aufgaben übernommen – bitte Punkte und Erwartungen prüfen.';
+    } catch (e) { solMsg.textContent = e.message; }
+    readBtn.disabled = false;
+  });
+  drawSol();
+  const keyIns = [0, 1, 2, 3, 4].map(i => h('input', { type: 'text', inputmode: 'decimal', value: String((ex.key || EXAM_KEY)[i]), 'aria-label': 'Note ' + (i + 1) + ' ab Prozent' }));
+  const tend = h('input', { type: 'checkbox', class: 'switch', role: 'switch', checked: !!ex.tend });
+  const actions = [
+    { label: 'Abbrechen', value: null },
+    { label: 'Speichern', primary: true, fn: () => 'ok' },
+    { label: 'Meine Handschrift', value: 'hand' }
+  ];
+  if (col.exam) actions.push({ label: 'Erwartungshorizont entfernen', cls: 'danger left', value: 'del' });
+  const r = await dlg('Erwartungshorizont – ' + col.name, h('div', {},
+    h('h3', { class: 'sec' }, 'Musterlösung mit Erwartungen'),
+    h('p', { class: 'hint' }, 'Ihre Lösung bzw. Ihren Erwartungshorizont scannen, fotografieren oder als PDF ablegen. Die KI liest diese Seiten bei jeder Prüfung mit.'),
+    h('div', { class: 'scantools' }, h('button', { type: 'button', class: 'primary', onclick: () => pick(true) }, 'Scannen'),
+      iconBtn('image', 'Datei oder PDF auswählen', () => pick(false)), readBtn, solMsg),
+    solBox,
+    field('Die ganze Arbeit: Aufgabenstellung und Hinweise (wird der KI mitgegeben)', textTa),
+    h('h3', { class: 'sec low' }, 'Aufgaben'), list,
+    h('div', { class: 'exrow' }, h('button', { type: 'button', onclick: () => { ex.tasks.push({ id: uid(), name: 'Aufgabe ' + (ex.tasks.length + 1), max: 4, exp: '' }); draw(); } }, '+ Aufgabe'), total),
+    h('h3', { class: 'sec low' }, 'Notenschlüssel (ab wie viel Prozent der Punkte)'),
+    h('div', { class: 'exkey' }, keyIns.map((k, i) => h('label', {}, h('span', {}, 'Note ' + (i + 1)), k, h('span', {}, '%')))),
+    h('p', { class: 'hint' }, 'Darunter: Note 6.'),
+    h('label', { class: 'switchrow' }, h('span', {}, 'Mit + und −', h('small', {}, 'Oberes Drittel einer Notenstufe „+“, unteres Drittel „−“')), tend)), actions);
+  urls.forEach(u => URL.revokeObjectURL(u));
+  if (r === 'hand') { ex.key = keyIns.map((k, i) => numP(k.value) ?? EXAM_KEY[i]); ex.tend = tend.checked; await handDialog(); return editExam(tab, col, ex); }
+  const before = ((col.exam && col.exam.sol) || []).map(s => s.name);
+  if (!r) { scanForget(ex._added.filter(n => !before.includes(n))); return; }
+  if (r === 'del') {
+    if (!await confirmDlg('Erwartungshorizont entfernen', 'Erwartungshorizont von „' + col.name + '“ samt Musterlösung entfernen? Eingetragene Noten und Punkte bleiben.')) { scanForget(ex._added); return; }
+    scanForget(before.concat(ex._added));
+    delete col.exam;
+  } else {
+    const key = keyIns.map((k, i) => { const v = numP(k.value); return v == null ? EXAM_KEY[i] : Math.max(0, Math.min(100, v)); });
+    for (let i = 1; i < 5; i++) if (key[i] > key[i - 1]) key[i] = key[i - 1];
+    ex.tasks = ex.tasks.map(t => ({ id: t.id, name: (t.name || '').trim() || 'Aufgabe', max: Math.max(0, +t.max || 0), exp: t.exp || '' }));
+    const keep = ex.sol.map(s => s.name);
+    scanForget(before.concat(ex._added).filter(n => !keep.includes(n)));
+    col.exam = { text: ex.text || '', tasks: ex.tasks, sol: ex.sol.map(s => s.r ? { name: s.name, t: s.t, r: s.r } : { name: s.name, t: s.t }), key, tend: tend.checked };
+    scanSync();
+  }
+  col.m = nowIso();
+  save(); render();
+}
+
+/* ---------- Handschrift ----------
+   Die Lehrkraft schreibt jedes Zeichen bis zu dreimal mit Finger oder Stift. Gespeichert werden
+   die Striche (S.settings.hand), beim Setzen wird je Stelle eine der Varianten genommen –
+   so sieht es geschrieben aus und nicht gestempelt. Höhe 1 = Kästchen, Grundlinie bei 0,75. */
+const HAND_CHARS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '/', ',', '+', '-', 'P.', 'Note'];
+const HAND_W = ch => ch === 'Note' ? 2.4 : ch === 'P.' ? 1.3 : 1;
+const HAND_INK = '#c8102e';
+function handPad(ch, glyph, onChange) {
+  const bw = HAND_W(ch), H = 84, W = Math.round(H * bw), R = 2;
+  const cv = h('canvas', { class: 'handpad', width: W * R, height: H * R });
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  const ctx = cv.getContext('2d');
+  let strokes = glyph ? glyph.s.map(s => s.map((v, i) => i % 2 ? v : v + 0.08)) : [], cur = null;
+  const paint = () => {
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.strokeStyle = '#d9d3c7'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 6]);
+    ctx.beginPath(); ctx.moveTo(0, cv.height * 0.75); ctx.lineTo(cv.width, cv.height * 0.75); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = HAND_INK; ctx.lineWidth = cv.height * 0.045; ctx.lineCap = ctx.lineJoin = 'round';
+    for (const s of strokes) {
+      ctx.beginPath(); ctx.moveTo(s[0] * cv.height, s[1] * cv.height);
+      for (let i = 2; i < s.length; i += 2) ctx.lineTo(s[i] * cv.height, s[i + 1] * cv.height);
+      if (s.length === 2) ctx.lineTo(s[0] * cv.height + 0.5, s[1] * cv.height);
+      ctx.stroke();
+    }
+  };
+  const at = e => { const b = cv.getBoundingClientRect(); return [(e.clientX - b.left) / b.height, (e.clientY - b.top) / b.height]; };
+  const r3 = v => Math.round(v * 1000) / 1000;
+  const result = () => {
+    if (!strokes.length) return null;
+    let lo = Infinity, hi = -Infinity;
+    strokes.forEach(s => { for (let i = 0; i < s.length; i += 2) { lo = Math.min(lo, s[i]); hi = Math.max(hi, s[i]); } });
+    return { w: r3(hi - lo + 0.1), s: strokes.map(s => s.map((v, i) => r3(i % 2 ? v : v - lo + 0.05))) };
+  };
+  cv.addEventListener('pointerdown', e => { e.preventDefault(); cv.setPointerCapture(e.pointerId); cur = at(e); strokes.push(cur); paint(); });
+  cv.addEventListener('pointermove', e => {
+    if (!cur) return;
+    const [x, y] = at(e), n = cur.length;
+    if (Math.hypot(x - cur[n - 2], y - cur[n - 1]) > 0.012) { cur.push(x, y); paint(); }
+  });
+  const up = () => { if (!cur) return; cur = null; onChange(result()); };
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+  paint();
+  const wrap = h('span', { class: 'handcell' }, cv, iconBtn('close', 'Zeichen „' + ch + '“ löschen', () => { strokes = []; paint(); onChange(null); }));
+  return wrap;
+}
+async function handDialog() {
+  const old = (S.settings.hand || {}).g || {};
+  const work = {};
+  HAND_CHARS.forEach(ch => { work[ch] = [0, 1, 2].map(k => (old[ch] || [])[k] || null); });
+  const prev = h('canvas', { class: 'handprev', width: 640, height: 110 });
+  const showPrev = () => {
+    const ctx = prev.getContext('2d'); ctx.clearRect(0, 0, prev.width, prev.height);
+    const g = {}; HAND_CHARS.forEach(ch => { const v = work[ch].filter(Boolean); if (v.length) g[ch] = v; });
+    handText(ctx, '3/4', 20, 70, 60, 1, g); handText(ctx, '17,5/24 P.', 170, 70, 60, 2, g); handText(ctx, 'Note 2-', 470, 70, 60, 3, g);
+  };
+  const rows = HAND_CHARS.map(ch => h('div', { class: 'handrow' }, h('b', {}, ch === '-' ? '−' : ch),
+    [0, 1, 2].map(k => handPad(ch, work[ch][k], g => { work[ch][k] = g; showPrev(); }))));
+  showPrev();
+  const r = await dlg('Meine Handschrift', h('div', {},
+    h('p', { class: 'hint' }, 'Jedes Zeichen bis zu dreimal schreiben, so wie Sie auf dem Blatt korrigieren (mit Stift oder Finger). Die gestrichelte Linie ist die Grundlinie. Mehrere Varianten wirken natürlicher.'),
+    h('div', { class: 'handgrid' }, rows),
+    h('h3', { class: 'sec low' }, 'Vorschau'), prev), [{ label: 'Abbrechen', value: null }, { label: 'Speichern', primary: true, fn: () => 'ok' }]);
+  if (r !== 'ok') return;
+  const g = {};
+  HAND_CHARS.forEach(ch => { const v = work[ch].filter(Boolean); if (v.length) g[ch] = v; });
+  S.settings.hand = { g, m: nowIso() };
+  S.settings.m = nowIso();
+  save();
+}
+/* Text in Handschrift zeichnen. size = Kästchenhöhe in Bildpunkten, (x, y) = Grundlinie links.
+   seed wählt die Varianten, damit dieselbe Stelle beim Neuzeichnen gleich aussieht. */
+function handText(ctx, text, x, y, size, seed, glyphs) {
+  const g = glyphs || (S.settings.hand || {}).g || {};
+  const top = y - size * 0.75;
+  let i = 0, n = 0;
+  ctx.save();
+  ctx.strokeStyle = ctx.fillStyle = HAND_INK; ctx.lineCap = ctx.lineJoin = 'round'; ctx.lineWidth = size * 0.05;
+  while (i < text.length) {
+    const tok = text.startsWith('Note', i) ? 'Note' : text.startsWith('P.', i) ? 'P.' : text[i] === '−' ? '-' : text[i];
+    i += tok === 'Note' ? 4 : tok === 'P.' ? 2 : 1;
+    if (tok === ' ') { x += size * 0.35; continue; }
+    const vars = g[tok];
+    if (vars && vars.length) {
+      const v = vars[(seed * 7 + n * 3) % vars.length], j = ((seed * 13 + n * 5) % 7 - 3) * size * 0.012;
+      for (const s of v.s) {
+        ctx.beginPath(); ctx.moveTo(x + s[0] * size, top + j + s[1] * size);
+        for (let k = 2; k < s.length; k += 2) ctx.lineTo(x + s[k] * size, top + j + s[k + 1] * size);
+        if (s.length === 2) ctx.lineTo(x + s[0] * size + 0.5, top + j + s[1] * size);
+        ctx.stroke();
+      }
+      x += v.w * size * 0.92;
+    } else {   // Zeichen noch nicht geschrieben: Ersatzschrift
+      ctx.font = 'italic ' + Math.round(size * 0.62) + 'px "Bradley Hand", "Segoe Print", "Comic Sans MS", cursive';
+      ctx.fillText(tok === '-' ? '−' : tok, x, y);
+      x += ctx.measureText(tok).width + size * 0.05;
+    }
+    n++;
+  }
+  ctx.restore();
+  return x;
+}
+/* Punkte je Aufgabe, Summe und Note auf eine Seite setzen (Positionen als Anteil der Seite). */
+function examStamp(cv, ex, d, pageKey, grade) {
+  const ctx = cv.getContext('2d'), size = Math.max(28, cv.height * 0.03);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);   // scanDraw lässt die Drehung stehen
+  ex.tasks.forEach((t, i) => {
+    const pos = (d.pos || {})[t.id];
+    if (!pos || pos.pg !== pageKey || d.p[t.id] == null) return;
+    handText(ctx, fmtP(d.p[t.id]) + '/' + fmtP(t.max), pos.x * cv.width, pos.y * cv.height + size * 0.3, size, i + 1);
+  });
+  const sp = (d.pos || {}).sum, sum = examSum(ex, d);
+  if (sp && sp.pg === pageKey && sum != null) {
+    handText(ctx, fmtP(sum) + '/' + fmtP(examMax(ex)) + ' P.', sp.x * cv.width, sp.y * cv.height, size * 1.1, 31);
+    if (grade) handText(ctx, 'Note ' + grade, sp.x * cv.width, sp.y * cv.height + size * 1.35, size * 1.25, 37);
+  }
+}
+/* Bild einer Seite so laden, dass es sich weiterverarbeiten lässt (für KI und Teilen). */
+async function scanBlobUrl(name) {
+  const buf = await scanStore('readonly', s => s.get(name)).catch(() => null);
+  if (buf) return URL.createObjectURL(new Blob([buf], { type: 'image/jpeg' }));
+  const u = await scanUrl(name);
+  const r = await fetch(u.url);
+  if (!r.ok) throw new Error('Die Seite konnte nicht geladen werden.');
+  return URL.createObjectURL(await r.blob());
+}
+
+const EXAM_SYSTEM = `Du hilfst einer Lehrkraft beim Korrigieren einer schriftlichen Klausur. Du bekommst die Aufgabenstellung, den Erwartungshorizont (Aufgaben A1, A2 … mit Höchstpunkten und erwarteter Lösung) und die gescannten Seiten einer handschriftlichen Schülerarbeit.
+- Lies die Handschrift sorgfältig, auch Durchgestrichenes und Randnotizen. Bewerte jede Aufgabe nur nach dem Erwartungshorizont. Punkte in halben Schritten, nie mehr als die Höchstpunkte.
+- Rechenaufgaben: Zwischenschritte zählen. Gib Teilpunkte für jeden richtigen Schritt, auch wenn das Endergebnis falsch ist. Folgefehler: Wer mit einem falschen Zwischenergebnis richtig weiterrechnet, verliert nur beim ersten Fehler Punkte. Stehen im Erwartungshorizont Punkte je Schritt, halte dich genau daran.
+- Begründung je Aufgabe: ein kurzer Satz auf Deutsch – was richtig ist, was fehlt oder falsch ist. Fehlt die Aufgabe, schreib das.
+- „unsicher“ = true, wenn du eine Stelle nicht sicher lesen konntest oder die Bewertung zweifelhaft ist.
+- Ort je Aufgabe: seite (1, 2, …), y = Höhe, auf der die Lösung der Aufgabe beginnt (0 = oben, 1 = unten), x = freie Stelle am rechten Rand neben der Lösung für die Punktzahl (meist 0,8 bis 0,9). Ort der Summe: freie Stelle unter der letzten Lösung.
+- Rückmeldung: zwei bis drei Sätze an den Schüler, freundlich und konkret, ohne Note und ohne Punktzahl.
+- Du machst nur Vorschläge; die Lehrkraft prüft und entscheidet.`;
+const EXAM_PLACE = { type: 'object', additionalProperties: false, required: ['seite', 'x', 'y'], properties: { seite: { type: 'integer' }, x: { type: 'number' }, y: { type: 'number' } } };
+const EXAM_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['aufgaben', 'summe_ort', 'rueckmeldung'],
+  properties: {
+    aufgaben: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['aufgabe', 'punkte', 'begruendung', 'unsicher', 'ort'],
+      properties: { aufgabe: { type: 'string' }, punkte: { type: 'number' }, begruendung: { type: 'string' }, unsicher: { type: 'boolean' }, ort: EXAM_PLACE } } },
+    summe_ort: EXAM_PLACE, rueckmeldung: { type: 'string' }
+  }
+};
+/* Eine Seite als Bild für die KI (gedreht wie angezeigt). */
+async function examImage(name, deg, label) {
+  const url = await scanBlobUrl(name);
+  try {
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error(label + ' konnte nicht gelesen werden.')); img.src = url; });
+    const cv = document.createElement('canvas');
+    scanDraw(cv, img, deg || 0);
+    return [{ type: 'text', text: label + ':' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: cv.toDataURL('image/jpeg', 0.85).split(',')[1] } }];
+  } finally { URL.revokeObjectURL(url); }
+}
+async function examCall(system, schema, content, key) {
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 240000);
+  let res;
+  try {
+    res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', signal: ctl.signal,
+      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2026-10-21',
+        'anthropic-beta': 'server-side-fallback-2026-07-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: 'claude-opus-5-5', max_tokens: 8000, fallbacks: 'default', system,
+        output_config: { effort: 'medium', format: { type: 'json_schema', schema } },
+        messages: [{ role: 'user', content }] })
+    });
+  } catch (e) { throw new Error(e.name === 'AbortError' ? 'Die KI hat zu lange gebraucht.' : 'Keine Verbindung zur KI. Ist das Internet an?'); }
+  finally { clearTimeout(timer); }
+  const msg = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(res.status === 401 ? 'Der Zugangsschlüssel stimmt nicht.' : res.status === 429 ? 'Zu viele Anfragen – bitte kurz warten.' :
+    res.status === 402 || /credit/i.test((msg.error || {}).message || '') ? 'Das Guthaben beim KI-Anbieter ist aufgebraucht.' : 'Die KI meldet einen Fehler: ' + ((msg.error || {}).message || res.status));
+  if (msg.stop_reason === 'refusal') throw new Error('Die KI hat diese Anfrage abgelehnt.');
+  try { return JSON.parse((msg.content || []).find(b => b.type === 'text').text); } catch (e) { throw new Error('Die Antwort der KI war unvollständig. Bitte noch einmal.'); }
+}
+/* Schickt Erwartungshorizont, Musterlösung und Seiten an die KI – ohne Namen, die Arbeit heißt nur S1, S2 … */
+async function examAskKI(cls, tab, st, col, pages, key) {
+  const ex = col.exam, kz = 'S' + (cls.students.indexOf(st) + 1), sol = ex.sol || [];
+  const content = [{ type: 'text', text: 'Arbeit von ' + kz + ' – ' + tab.name + ', ' + col.name + '\n\nAufgabenstellung und Hinweise:\n' + (ex.text || '(keine)') +
+    '\n\nErwartungshorizont:\n' + ex.tasks.map((t, i) => 'A' + (i + 1) + ' „' + t.name + '“ (höchstens ' + fmtP(t.max) + ' Punkte):\n' + (t.exp || '(keine Angabe, siehe Musterlösung)')).join('\n\n') +
+    (sol.length ? '\n\nZuerst ' + sol.length + ' Seite(n) Musterlösung mit Erwartungen der Lehrkraft, danach die Schülerarbeit.' : '') +
+    '\n\nDie Schülerarbeit hat ' + pages.length + ' Seiten in dieser Reihenfolge.' }];
+  for (let i = 0; i < sol.length; i++) content.push(...await examImage(sol[i].name, sol[i].r, 'Musterlösung Seite ' + (i + 1)));
+  for (let i = 0; i < pages.length; i++)
+    content.push(...await examImage(pages[i].name, +((getCell(tab, st.id, pages[i].key.replace(':d:', ':r:')) || {}).v || 0), 'Schülerarbeit Seite ' + (i + 1)));
+  return examFromKI(ex, pages, await examCall(EXAM_SYSTEM, EXAM_SCHEMA, content, key));
+}
+/* Aus der abgelegten Musterlösung die Aufgaben mit Punkten und Erwartungen herauslesen (nur Vorschlag). */
+const EXAM_READ_SYSTEM = `Du bekommst die Musterlösung bzw. den Erwartungshorizont einer Klausur als Bilder. Lies daraus jede Aufgabe (auch Teilaufgaben wie 1a, 1b einzeln, wenn sie eigene Punkte haben) mit Bezeichnung, Höchstpunkten und erwarteter Lösung ab.
+- Bei Rechenaufgaben die Schritte mit ihren Punkten aufschreiben, z. B. „Ansatz 1 P., Umformen 1 P., Ergebnis x = 4 1 P.“.
+- Übernimm die Punkte genau so, wie sie dort stehen. Stehen keine Punkte da, schätze sinnvoll und schreib in die Erwartung „Punkte geschätzt“.
+- „text“: die Aufgabenstellung bzw. allgemeine Hinweise der ganzen Arbeit in wenigen Sätzen.
+- Auf Deutsch. Erfinde keine Aufgaben, die nicht im Bild stehen.`;
+const EXAM_READ_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['text', 'aufgaben'],
+  properties: { text: { type: 'string' }, aufgaben: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['name', 'punkte', 'erwartung'],
+    properties: { name: { type: 'string' }, punkte: { type: 'number' }, erwartung: { type: 'string' } } } } }
+};
+async function examReadSolution(ex, key) {
+  const content = [{ type: 'text', text: 'Musterlösung mit ' + ex.sol.length + ' Seite(n):' }];
+  for (let i = 0; i < ex.sol.length; i++) content.push(...await examImage(ex.sol[i].name, ex.sol[i].r, 'Seite ' + (i + 1)));
+  return examCall(EXAM_READ_SYSTEM, EXAM_READ_SCHEMA, content, key);
+}
+/* Antwort der KI in einen Vorschlag umwandeln (Punkte begrenzt, Orte auf die Seiten bezogen). */
+function examFromKI(ex, pages, obj) {
+  const cl = v => Math.max(0.02, Math.min(0.95, +v || 0));
+  const place = o => { const p = pages[Math.max(0, Math.min(pages.length - 1, (o && o.seite || 1) - 1))]; return p ? { pg: p.key, x: cl(o.x), y: cl(o.y) } : null; };
+  const k = { p: {}, w: {}, u: {}, pos: {}, g: String(obj.rueckmeldung || ''), at: nowIso() };
+  for (const a of obj.aufgaben || []) {
+    const m = /(\d+)/.exec(String(a.aufgabe)), t = m && ex.tasks[+m[1] - 1];
+    if (!t) continue;
+    k.p[t.id] = Math.max(0, Math.min(t.max, Math.round((+a.punkte || 0) * 2) / 2));
+    k.w[t.id] = String(a.begruendung || ''); k.u[t.id] = !!a.unsicher;
+    const pl = place(a.ort); if (pl) k.pos[t.id] = pl;
+  }
+  const sp = place(obj.summe_ort); if (sp) k.pos.sum = sp;
+  return k;
+}
+
+/* Korrektur eines Schülers: Punkte je Aufgabe, Vorschlag der KI, Seiten mit Handschrift. */
+async function examFlow(cls, tab, st, col, onChange) {
+  let cur = st;
+  for (;;) {
+    const r = await examDialog(cls, tab, cur, col);
+    if (onChange) onChange();
+    if (r !== 'prev' && r !== 'next') break;
+    const list = rowView.solo ? cls.students : shownStudents(cls);
+    const nx = list[list.findIndex(s => s.id === cur.id) + (r === 'next' ? 1 : -1)];
+    if (!nx) break;
+    cur = nx;
+  }
+  render();
+}
+function examDialog(cls, tab, st, col) {
+  const ex = col.exam, pages = col.scan ? scanPages(tab, st.id, col.id) : [];
+  let d = examData(tab, st.id, col);
+  d.p = d.p || {}; d.pos = d.pos || {};
+  let k = (getCell(tab, st.id, col.id + ':k') || {}).v || null;
+  let placing = null;
+  const store = () => { setCell(tab, st.id, col.id + ':p', examCopy(d)); save(); };
+  const head = h('div', { class: 'exsum' }), kiMsg = h('span', { class: 'hint' }), placeHint = h('p', { class: 'hint explace' });
+  const gradeIn = h('input', { type: 'text', class: 'grade', maxlength: 2, autocomplete: 'off', 'aria-label': 'Note' });
+  const gradeBtn = h('button', { type: 'button', class: 'primary' });
+  const fb = h('textarea', { rows: 3, value: d.g || '', placeholder: 'Rückmeldung an den Schüler (erscheint nicht auf dem Scan)',
+    oninput: () => { d.g = fb.value; }, onchange: store });
+  const taskBox = h('div', {}), pageBox = h('div', { class: 'expages' });
+  const canvases = [];
+  const grade = () => examGrade(ex, examSum(ex, d));
+  const paintHead = () => {
+    const sum = examSum(ex, d), max = examMax(ex), g = grade(), cell = getCell(tab, st.id, col.id);
+    head.replaceChildren(...[h('b', {}, sum == null ? 'Noch keine Punkte' : fmtP(sum) + ' / ' + fmtP(max) + ' Punkte'),
+      sum != null && max ? h('span', {}, ' · ' + Math.round(sum / max * 100) + ' % · Vorschlag Note ' + g) : null,
+      h('span', { class: 'hint' }, cell ? ' · eingetragen: ' + cell.v : ' · noch keine Note eingetragen')].filter(Boolean));
+    if (document.activeElement !== gradeIn) gradeIn.value = g;
+    gradeBtn.textContent = 'Note eintragen';
+    gradeBtn.disabled = !g && !gradeIn.value;
+  };
+  const paintPages = () => canvases.forEach(c => c.paint());
+  const refresh = () => { paintHead(); paintPages(); };
+  const drawTasks = () => {
+    taskBox.replaceChildren(...ex.tasks.map((t, i) => {
+      const inp = h('input', { type: 'text', inputmode: 'decimal', class: 'expts', value: d.p[t.id] != null ? fmtP(d.p[t.id]) : '', 'aria-label': 'Punkte ' + t.name });
+      inp.addEventListener('change', () => {
+        const v = inp.value.trim() === '' ? null : numP(inp.value);
+        if (v != null && (v < 0 || v > t.max)) { inp.classList.add('bad'); inp.title = 'Zwischen 0 und ' + fmtP(t.max); return; }
+        inp.classList.remove('bad');
+        if (v == null) delete d.p[t.id]; else d.p[t.id] = v;
+        inp.value = v == null ? '' : fmtP(v);
+        store(); refresh();
+      });
+      inp.addEventListener('keydown', e => { if (e.key !== 'Enter') return; e.preventDefault(); const all = [...taskBox.querySelectorAll('input.expts')]; const nx = all[all.indexOf(inp) + 1]; if (nx) nx.focus(); else inp.blur(); });
+      const pin = h('button', { type: 'button', class: 'expin' + (d.pos[t.id] ? ' on' : '') + (placing === t.id ? ' active' : ''), title: 'Stelle auf dem Scan wählen',
+        onclick: () => { placing = placing === t.id ? null : t.id; drawTasks(); } }, '📍');
+      const kp = k && k.p[t.id] != null ? k.p[t.id] : null;
+      const kiRow = kp == null ? null : h('div', { class: 'exki' + (k.u[t.id] ? ' unsure' : '') },
+        h('span', {}, 'KI: ' + fmtP(kp) + ' P.' + (k.u[t.id] ? ' (unsicher)' : '') + ' – ' + (k.w[t.id] || '')),
+        d.p[t.id] === kp ? h('span', { class: 'hint' }, '✓') : h('button', { type: 'button', onclick: () => { take(t.id); } }, 'übernehmen'));
+      return h('div', { class: 'extask' },
+        h('div', { class: 'exrow' }, h('span', { class: 'grow' }, h('b', {}, t.name)), inp, h('span', { class: 'hint' }, '/ ' + fmtP(t.max)), pages.length ? pin : null),
+        t.exp ? h('details', { class: 'exexp' }, h('summary', {}, 'Erwartung'), h('div', {}, t.exp)) : null, kiRow);
+    }));
+    placeHint.textContent = placing ? 'Jetzt auf die Stelle im Scan tippen, an die ' + (placing === 'sum' ? 'Summe und Note' : 'die Punkte von „' + (ex.tasks.find(t => t.id === placing) || {}).name + '“') + ' sollen.' : '';
+  };
+  const take = tid => {
+    d.p[tid] = k.p[tid];
+    if (k.pos[tid] && !d.pos[tid]) d.pos[tid] = k.pos[tid];
+    if (k.pos.sum && !d.pos.sum) d.pos.sum = k.pos.sum;
+    store(); drawTasks(); refresh();
+  };
+  const takeAll = () => {
+    ex.tasks.forEach(t => { if (k.p[t.id] != null) { d.p[t.id] = k.p[t.id]; if (k.pos[t.id]) d.pos[t.id] = k.pos[t.id]; } });
+    if (k.pos.sum) d.pos.sum = k.pos.sum;
+    if (k.g && !(d.g || '').trim()) { d.g = k.g; fb.value = k.g; }
+    store(); drawTasks(); refresh();
+  };
+  const kiBox = h('div', { class: 'exkibar' });
+  const drawKi = () => {
+    const key = (kiConf().key || '').trim();
+    kiBox.replaceChildren(...[
+      pages.length && key ? h('button', { type: 'button', onclick: runKi }, '✦ KI prüfen lassen') : null,
+      k ? h('button', { type: 'button', onclick: takeAll }, 'Alle KI-Vorschläge übernehmen') : null,
+      kiMsg].filter(Boolean));
+    if (!pages.length) kiMsg.textContent = col.scan ? 'Noch kein Scan – die KI braucht die Seiten.' : '';
+    else if (!key) kiMsg.textContent = 'Für die KI-Prüfung den Zugangsschlüssel in der Schnelleingabe unter „KI-Hilfe“ eintragen.';
+    else if (k && !kiMsg.dataset.busy) kiMsg.textContent = 'Vorschlag vom ' + fmtTs(k.at) + (k.g ? ' · Rückmeldung: ' + k.g : '');
+  };
+  const runKi = async () => {
+    kiMsg.dataset.busy = '1'; kiMsg.textContent = 'Die KI liest die Arbeit … (dauert etwa eine Minute)';
+    kiBox.querySelectorAll('button').forEach(b => { b.disabled = true; });
+    try {
+      k = await examAskKI(cls, tab, st, col, pages, kiConf().key.trim());
+      setCell(tab, st.id, col.id + ':k', k); save();
+      delete kiMsg.dataset.busy; drawKi(); drawTasks();
+    } catch (e) { delete kiMsg.dataset.busy; drawKi(); kiMsg.textContent = e.message; }
+  };
+  gradeIn.addEventListener('input', () => { gradeBtn.disabled = !gradeIn.value.trim(); });
+  gradeBtn.addEventListener('click', () => {
+    const v = gradeIn.value.trim().replace(/\s/g, '').replace(/[−–]/g, '-');
+    if (!GRADE_RE.test(v)) { gradeIn.classList.add('bad'); return; }
+    gradeIn.classList.remove('bad');
+    setCell(tab, st.id, col.id, v); save(); paintHead();
+  });
+  // Seiten mit den gesetzten Punkten; Tippen setzt die gewählte Stelle.
+  pages.forEach((p, i) => {
+    const cv = h('canvas', { role: 'img', 'aria-label': 'Seite ' + (i + 1) }), note = h('p', { class: 'hint' }, 'Seite ' + (i + 1) + ' wird geladen …');
+    const img = new Image();
+    let url = null;
+    cv.paint = () => { if (!img.naturalWidth) return; scanDraw(cv, img, +((getCell(tab, st.id, p.key.replace(':d:', ':r:')) || {}).v || 0)); examStamp(cv, ex, d, p.key, grade()); };
+    cv.free = () => { if (url) URL.revokeObjectURL(url); };
+    img.onload = () => { note.remove(); cv.paint(); };
+    scanBlobUrl(p.name).then(u => { url = u; img.src = u; }).catch(e => { note.textContent = 'Seite ' + (i + 1) + ': ' + e.message; });
+    cv.addEventListener('click', e => {
+      if (!placing) return;
+      const b = cv.getBoundingClientRect();
+      d.pos[placing] = { pg: p.key, x: Math.round((e.clientX - b.left) / b.width * 1000) / 1000, y: Math.round((e.clientY - b.top) / b.height * 1000) / 1000 };
+      const idx = ex.tasks.findIndex(t => t.id === placing);
+      placing = idx >= 0 && ex.tasks[idx + 1] && !d.pos[ex.tasks[idx + 1].id] ? ex.tasks[idx + 1].id : null;   // gleich die nächste Aufgabe
+      store(); drawTasks(); refresh();
+    });
+    canvases.push(cv);
+    pageBox.append(h('div', { class: 'scanpg' }, note, h('div', { class: 'scanimg' }, cv)));
+  });
+  const share = async () => {
+    const files = [];
+    for (let i = 0; i < canvases.length; i++) {
+      const blob = await new Promise(res => canvases[i].toBlob(res, 'image/jpeg', 0.85));
+      if (blob) files.push(new File([blob], (col.name + ' ' + st.name + ' S' + (i + 1) + '.jpg').replace(/[\\/:*?"<>|]/g, '_'), { type: 'image/jpeg' }));
+    }
+    if (!files.length) return;
+    if (navigator.canShare && navigator.canShare({ files })) { try { await navigator.share({ files }); } catch (e) {} }
+    else files.forEach(f => download(f, f.name, 'image/jpeg'));
+  };
+  drawTasks(); drawKi(); paintHead();
+  const content = h('div', { class: 'exam' },
+    h('div', { class: 'exleft' },
+      h('p', { class: 'hint' }, cls.name + ' · ' + tab.name + ' · ' + col.name),
+      head, h('div', { class: 'exrow' }, h('span', { class: 'grow' }), gradeIn, gradeBtn),
+      kiBox, taskBox,
+      pages.length ? h('div', { class: 'exrow' }, h('button', { type: 'button', class: 'expin' + (d.pos.sum ? ' on' : ''), onclick: () => { placing = placing === 'sum' ? null : 'sum'; drawTasks(); } }, '📍 Stelle für Summe und Note'),
+        h('span', { class: 'grow' }), iconBtn('export', 'Korrigierte Seiten teilen oder sichern', share)) : null,
+      field('Rückmeldung', fb)),
+    h('div', { class: 'exright' }, placeHint,
+      pages.length ? pageBox : h('p', { class: 'hint' }, col.scan ? 'Noch kein Scan abgelegt.' : 'Für diese Leistung ist „Scans ablegen“ aus – Punkte lassen sich trotzdem eintragen.')));
+  const pr = dlg('Korrektur – ' + st.name, content, [{ label: 'Schließen', value: null }, { label: '‹ Voriger', value: 'prev' }, { label: 'Nächster ›', value: 'next' }]);
+  const dl = content.closest('dialog');
+  if (dl) dl.classList.add('examdlg');
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  return pr.then(r => { if (fb.value !== (examData(tab, st.id, col).g || '')) { d.g = fb.value; store(); } canvases.forEach(c => c.free()); return r; });
+}
+
 /* Verschlüsselung der OneDrive-Datei: Aus dem Passwort wird per PBKDF2 ein AES-256-Schlüssel
    abgeleitet. Der Schlüssel bleibt auf dem Gerät, in der OneDrive liegt nur Verschlüsseltes. */
 const PW_MSG = 'Die Daten in der OneDrive sind verschlüsselt. Bitte das Passwort eingeben.';
@@ -2915,7 +3489,7 @@ async function pwDialog(mode) {
 
 /* Nur diese Teile werden abgeglichen; Ansicht und Geräte-Einstellungen bleiben lokal. */
 function strip(s) {
-  return { version: s.version, classOrderM: s.classOrderM, classes: s.classes, deleted: s.deleted || {}, settings: { tendency: s.settings.tendency, name: s.settings.name, halfWeights: s.settings.halfWeights, fontsOff: s.settings.fontsOff, m: s.settings.m } };
+  return { version: s.version, classOrderM: s.classOrderM, classes: s.classes, deleted: s.deleted || {}, settings: { tendency: s.settings.tendency, name: s.settings.name, halfWeights: s.settings.halfWeights, fontsOff: s.settings.fontsOff, hand: s.settings.hand, m: s.settings.m } };
 }
 function canon(v) {
   return JSON.stringify(v, (k, x) => x && typeof x === 'object' && !Array.isArray(x)
