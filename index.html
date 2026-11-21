@@ -217,6 +217,11 @@ td.cell.check { background: #fff1b8; }
 .spbar.low .spcol { background: #c8102e; }
 .exgoal { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin: 6px 0; }
 .exgoal select { flex: none; }
+.exshow { border-top: 1px solid var(--line, #e3e3e3); margin-top: 10px; padding-top: 6px; }
+.exchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.exchip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; border: 1px solid #d0d0d0; color: #777; font-size: 14px; cursor: pointer; user-select: none; }
+.exchip.on { border-color: #c8102e; color: #c8102e; background: #fff1f3; }
+.exchip input { margin: 0; accent-color: #c8102e; }
 .scanpg { border: 1px solid var(--line); border-radius: 10px; margin: 0 0 14px; overflow: hidden; background: var(--panel); }
 .scanhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 4px 12px; font-size: 13px; color: var(--muted); }
 .scanimg { overflow: auto; max-height: 75vh; }
@@ -3316,8 +3321,8 @@ function examStamp(cv, ex, d, pageKey, grade) {
   const ctx = cv.getContext('2d'), size = Math.max(28, cv.height * 0.03);
   ctx.setTransform(1, 0, 0, 1, 0, 0);   // scanDraw lässt die Drehung stehen
   // Haken (richtig) und f (falsch) neben jeder Teilantwort; (x, y) = links auf der Grundlinie.
-  const g = (S.settings.hand || {}).g || {};
-  (d.m || []).forEach((e, i) => {
+  const g = (S.settings.hand || {}).g || {}, hide = d.hide || {};   // ausgeblendete Anmerkungen bleiben gespeichert
+  (hide.m ? [] : d.m || []).forEach((e, i) => {
     if (e.pg !== pageKey) return;
     const x = e.x * cv.width, y = e.y * cv.height, s = size * 0.95;
     // f = falsch, ff = Folgefehler; c = richtige Antwort, die daneben geschrieben wird (am Ausgangspunkt eines Folgefehlers)
@@ -3328,12 +3333,12 @@ function examStamp(cv, ex, d, pageKey, grade) {
   });
   ex.tasks.forEach((t, i) => {
     const pos = (d.pos || {})[t.id];
-    if (!pos || pos.pg !== pageKey || d.p[t.id] == null) return;
+    if (hide.pts || !pos || pos.pg !== pageKey || d.p[t.id] == null) return;
     handText(ctx, fmtP(d.p[t.id]) + '/' + fmtP(t.max), pos.x * cv.width, pos.y * cv.height + size * 0.3, size, i + 1);
   });
   // Rechtschreibfehler: rot unterstrichen (leicht unregelmäßig wie von Hand), Berichtigung in Druckschrift darüber.
   // (x, y) = Anfang des falschen Wortes auf der Grundlinie, w/h = Breite/Höhe des Wortes – alles als Anteil der Seite.
-  (d.r || []).forEach((e, i) => {
+  (hide.r ? [] : d.r || []).forEach((e, i) => {
     if (e.pg !== pageKey) return;
     const x0 = e.x * cv.width, x1 = (e.x + (e.w || 0.12)) * cv.width, y = e.y * cv.height, hh = Math.max(14, (e.h || 0.02) * cv.height);
     const wob = n => (((i + 3) * 9301 + n * 49297) % 233280) / 233280 - 0.5;
@@ -3345,8 +3350,8 @@ function examStamp(cv, ex, d, pageKey, grade) {
   });
   const sp = (d.pos || {}).sum, sum = examSum(ex, d);
   if (sp && sp.pg === pageKey && sum != null) {
-    handText(ctx, fmtP(sum) + '/' + fmtP(examMax(ex)) + ' P.', sp.x * cv.width, sp.y * cv.height, size * 1.1, 31);
-    if (grade) handText(ctx, 'Note ' + grade, sp.x * cv.width, sp.y * cv.height + size * 1.35, size * 1.25, 37);
+    if (!hide.sum) handText(ctx, fmtP(sum) + '/' + fmtP(examMax(ex)) + ' P.', sp.x * cv.width, sp.y * cv.height, size * 1.1, 31);
+    if (grade && !hide.note) handText(ctx, 'Note ' + grade, sp.x * cv.width, sp.y * cv.height + size * (hide.sum ? 0 : 1.35), size * 1.25, 37);
   }
 }
 /* Bild einer Seite so laden, dass es sich weiterverarbeiten lässt (für KI und Teilen). */
@@ -3632,6 +3637,30 @@ function examDialog(cls, tab, st, col) {
     canvases.push(cv);
     pageBox.append(h('div', { class: 'scanpg' }, note, h('div', { class: 'scanimg' }, cv)));
   });
+  // Anmerkungen auf dem Blatt ein- und ausblenden (bleiben gespeichert, nur nicht gezeichnet – auch nicht beim Teilen).
+  const HIDE_KINDS = [['pts', 'Punkte je Aufgabe'], ['sum', 'Gesamtpunkte'], ['note', 'Note'], ['m', 'Haken und f'], ['r', 'Rechtschreibung']];
+  const showBox = h('div', { class: 'exshow' }), showMsg = h('span', { class: 'hint' });
+  const drawShow = () => {
+    const hd = d.hide || {}, allOff = HIDE_KINDS.every(([id]) => hd[id]);
+    const setHide = nh => { if (Object.values(nh).some(Boolean)) d.hide = nh; else delete d.hide; store(); drawShow(); refresh(); };
+    showBox.replaceChildren(
+      h('div', { class: 'exrow' }, h('b', { class: 'grow' }, 'Auf dem Blatt zeigen'),
+        h('button', { type: 'button', onclick: () => setHide(allOff ? {} : Object.fromEntries(HIDE_KINDS.map(([id]) => [id, true]))) }, allOff ? 'Alle zeigen' : 'Alle ausblenden')),
+      h('div', { class: 'exchips' }, HIDE_KINDS.map(([id, label]) => h('label', { class: 'exchip' + (hd[id] ? '' : ' on') },
+        h('input', { type: 'checkbox', checked: !hd[id], onchange: e => setHide({ ...hd, [id]: !e.target.checked }) }), label))),
+      cls.students.length > 1 ? h('div', { class: 'exrow' }, h('button', { type: 'button', onclick: () => {
+        let n = 0;
+        for (const s of cls.students) {
+          if (s.id === st.id) continue;
+          const c = getCell(tab, s.id, col.id + ':p');
+          if (!c || !c.v) continue;
+          const v = examCopy(c.v);
+          if (d.hide) v.hide = examCopy(d.hide); else delete v.hide;
+          setCell(tab, s.id, col.id + ':p', v); n++;
+        }
+        save(); showMsg.textContent = n ? 'Für ' + n + ' weitere Arbeiten übernommen.' : 'Noch keine weiteren korrigierten Arbeiten.';
+      } }, 'Für alle Arbeiten dieser Leistung übernehmen'), showMsg) : null);
+  };
   const share = async () => {
     const files = [];
     for (let i = 0; i < canvases.length; i++) {
@@ -3642,7 +3671,7 @@ function examDialog(cls, tab, st, col) {
     if (navigator.canShare && navigator.canShare({ files })) { try { await navigator.share({ files }); } catch (e) {} }
     else files.forEach(f => download(f, f.name, 'image/jpeg'));
   };
-  drawTasks(); drawKi(); drawSpell(); drawMarks(); paintHead();
+  drawTasks(); drawKi(); drawSpell(); drawMarks(); drawShow(); paintHead();
   const content = h('div', { class: 'exam' },
     h('div', { class: 'exleft' },
       h('p', { class: 'hint' }, cls.name + ' · ' + tab.name + ' · ' + col.name),
@@ -3650,6 +3679,7 @@ function examDialog(cls, tab, st, col) {
       kiBox, taskBox, markBox, spellBox,
       pages.length ? h('div', { class: 'exrow' }, h('button', { type: 'button', class: 'expin' + (d.pos.sum ? ' on' : ''), onclick: () => { placing = placing === 'sum' ? null : 'sum'; drawTasks(); } }, '📍 Stelle für Summe und Note'),
         h('span', { class: 'grow' }), iconBtn('export', 'Korrigierte Seiten teilen oder sichern', share)) : null,
+      pages.length ? showBox : null,
       field('Rückmeldung', fb)),
     h('div', { class: 'exright' }, placeHint,
       pages.length ? pageBox : h('p', { class: 'hint' }, col.scan ? 'Noch kein Scan abgelegt.' : 'Für diese Leistung ist „Scans ablegen“ aus – Punkte lassen sich trotzdem eintragen.')));
