@@ -391,7 +391,12 @@ dialog.dlg.examdlg { width: min(1100px, calc(100vw - 16px)); max-height: calc(10
   .exam { display: grid; grid-template-columns: minmax(250px, 300px) 1fr; gap: 14px; align-items: start; }
   .exleft, .exright { max-height: calc(100vh - 120px); overflow: auto; }
 }
-dialog.examdlg .dlg-actions { display: none; }   /* Voriger/Nächster stehen in der Leiste über der Arbeit */
+dialog.examdlg .dlg-actions { display: none; }   /* Voriger/Nächster stehen links unter der Rückmeldung */
+/* Bildlaufleisten unsichtbar – gescrollt wird trotzdem */
+dialog.dlg, .exleft, .exright { scrollbar-width: none; }
+dialog.dlg::-webkit-scrollbar, .exleft::-webkit-scrollbar, .exright::-webkit-scrollbar { display: none; }
+.exgrade input.grade { width: 56px; flex: none; text-align: center; }
+.exgrade .iconbtn { margin-left: 16px; }
 .exbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px; padding: 0 0 8px; background: var(--panel); }
 .exbar .grow { flex: 1; }
 @media (min-width: 1000px) {
@@ -3806,11 +3811,12 @@ function examDialog(cls, tab, st, col) {
   const content = h('div', { class: 'exam' },
     h('div', { class: 'exleft' },
       h('p', { class: 'hint' }, cls.name + ' · ' + tab.name + ' · ' + col.name),
-      head, h('div', { class: 'exrow' }, gradeIn, gradeBtn, pages.length ? iconBtn('export', 'Korrigierte Seiten teilen oder sichern', share) : null),
+      head, h('div', { class: 'exrow exgrade' }, gradeIn, gradeBtn, pages.length ? iconBtn('export', 'Korrigierte Seiten teilen oder sichern', share) : null),
       kiBox, taskBox, markBox, spellBox,
       pages.length ? showBox : null,
-      field('Rückmeldung', fb)),
-    h('div', { class: 'exright' }, h('div', { class: 'exbar' }, navBtn(1, '‹ Voriger'), navBtn(2, 'Nächster ›'), h('span', { class: 'grow' }), undoBtn, redoBtn), placeHint,
+      field('Rückmeldung', fb),
+      h('div', { class: 'exrow' }, navBtn(1, '‹ Voriger'), navBtn(2, 'Nächster ›'))),
+    h('div', { class: 'exright' }, h('div', { class: 'exbar' }, h('span', { class: 'grow' }), undoBtn, redoBtn), placeHint,
       pages.length ? pageBox : h('p', { class: 'hint' }, col.scan ? 'Noch kein Scan abgelegt.' : 'Für diese Leistung ist „Scans ablegen“ aus – Punkte lassen sich trotzdem eintragen.')));
   const pr = dlg('Korrektur – ' + st.name, content, [{ label: 'Schließen', value: null }, { label: '‹ Voriger', value: 'prev' }, { label: 'Nächster ›', value: 'next' }]);
   const dl = content.closest('dialog');
