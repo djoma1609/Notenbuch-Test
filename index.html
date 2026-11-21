@@ -3100,20 +3100,42 @@ async function editExam(tab, col, draft) {
     if (!raw.length) { goalMsg.textContent = 'Noch keine Punkte vorhanden.'; return; }
     const evalCur = c => {
       const rew = {}; ex.tasks.forEach(t => { rew[t.id] = [orig[t.id], c[t.id]]; });
-      return spiegelOf(key, ex.tasks.map(t => ({ ...t, max: c[t.id] })), raw.map(p => scaleBy(p, rew)));
+      const tasks = ex.tasks.map(t => ({ ...t, max: c[t.id] })), pts = raw.map(p => scaleBy(p, rew)), mx = tasks.reduce((s, t) => s + t.max, 0) || 1;
+      const sp = spiegelOf(key, tasks, pts);
+      sp.pct = pts.reduce((s, p) => s + (examSum({ tasks }, { p }) || 0), 0) / pts.length / mx;   // mittlerer Anteil – hilft über Stufen ohne Notenänderung hinweg
+      return sp;
     };
-    const score = sp => goalType.value === 'avg' ? sp.avg : sp.low * 10 + sp.avg;
+    const score = sp => (goalType.value === 'avg' ? sp.avg : sp.low * 10 + sp.avg) - sp.pct * 0.01;
     let sp = evalCur(cur);
     if (ok(sp)) { goalMsg.textContent = 'Das Ziel ist mit der jetzigen Gewichtung schon erreicht.'; return; }
-    for (let it = 0; it < 80 && !ok(sp); it++) {
-      let best = null;
-      for (const ti of ex.tasks) for (const tj of ex.tasks) {
-        if (ti === tj || cur[ti.id] + 0.5 > orig[ti.id] * 1.5 || cur[tj.id] - 0.5 < Math.max(0.5, orig[tj.id] * 0.5)) continue;
-        const c = { ...cur, [ti.id]: cur[ti.id] + 0.5, [tj.id]: cur[tj.id] - 0.5 }, s = evalCur(c);
-        if (!best || score(s) < score(best.s) - 1e-9) best = { c, s };
+    // Stufe 1: nur umverteilen (Gesamtpunkte gleich, je Aufgabe ½- bis 1½-fach).
+    // Stufe 2, nur wenn nötig: weitere Grenzen (¼- bis 2-fach) und die Gesamtpunkte dürfen sich um bis zu ein Viertel ändern.
+    const total0 = ex.tasks.reduce((s, t) => s + orig[t.id], 0);
+    const sumOf = c => ex.tasks.reduce((s, t) => s + c[t.id], 0);
+    for (const [lo, hi, free] of [[0.5, 1.5, false], [0.25, 2, true]]) {
+      // je Runde: kleinste Schrittweite, die das Ziel erreicht oder wenigstens näher bringt (so wenig ändern wie nötig)
+      for (let it = 0; it < 80 && !ok(sp); it++) {
+        let pick = null;
+        for (const st of [0.5, 1, 1.5, 2]) {
+          let best = null, hit = null;
+          const tryC = c => {
+            if (ex.tasks.some(t => c[t.id] < Math.max(0.5, orig[t.id] * lo) - 1e-9 || c[t.id] > orig[t.id] * hi + 1e-9)) return;
+            if (Math.abs(sumOf(c) - total0) > total0 * 0.25 + 1e-9) return;
+            const s = evalCur(c), keep = Math.abs(sumOf(c) - total0) < 1e-9;
+            if (ok(s) && (!hit || (keep && !hit.keep) || (keep === hit.keep && score(s) > score(hit.s)))) hit = { c, s, keep };   // knapp am Ziel, Gesamtpunkte möglichst gleich
+            if (!best || score(s) < score(best.s) - 1e-9) best = { c, s };
+          };
+          for (const ti of ex.tasks) {
+            for (const tj of ex.tasks) if (ti !== tj) tryC({ ...cur, [ti.id]: cur[ti.id] + st, [tj.id]: cur[tj.id] - st });
+            if (free) { tryC({ ...cur, [ti.id]: cur[ti.id] + st }); tryC({ ...cur, [ti.id]: cur[ti.id] - st }); }
+          }
+          if (hit) { pick = hit; break; }
+          if (best && score(best.s) < score(sp) - 1e-9) { pick = best; break; }
+        }
+        if (!pick) break;
+        Object.assign(cur, pick.c); sp = pick.s;
       }
-      if (!best || score(best.s) >= score(sp) - 1e-9) break;
-      Object.assign(cur, best.c); sp = best.s;
+      if (ok(sp)) break;
     }
     const changed = ex.tasks.filter(t => cur[t.id] !== t.max);
     if (!changed.length && !ok(sp)) { goalMsg.textContent = 'Durch andere Gewichtung lässt sich das Ziel nicht erreichen.'; return; }
@@ -3121,10 +3143,11 @@ async function editExam(tab, col, draft) {
     draw(); showSpiegel();
     goalMsg.textContent = (ok(sp) ? 'Neu gewichtet: ' : 'Ziel nicht ganz erreicht, so weit wie möglich neu gewichtet: ') +
       ex.tasks.filter(t => ex._rew[t.id]).map(t => t.name + ' ' + fmtP(ex._rew[t.id][0]) + ' → ' + fmtP(t.max)).join(', ') +
-      ' Punkte. Die Punkte der Schüler werden anteilig umgerechnet – erst mit „Speichern“ übernommen.';
+      ' Punkte' + (sumOf(cur) !== total0 ? ' (Gesamt ' + fmtP(total0) + ' → ' + fmtP(sumOf(cur)) + ' Punkte)' : '') +
+      '. Die Punkte der Schüler werden anteilig umgerechnet – erst mit „Speichern“ übernommen.';
   };
   const suggest = () => {
-    const base = readKey(), want = numP(goalVal.value);
+    const base = readKey(), wv = parseFloat(String(goalVal.value).replace(',', '.')), want = isNaN(wv) ? null : wv;   // genau, nicht auf halbe Punkte gerundet
     if (want == null) { goalMsg.textContent = 'Bitte einen Zielwert eingeben.'; return; }
     const ok = sp => goalType.value === 'avg' ? sp.avg != null && sp.avg <= want + 1e-9 : sp.low <= want;
     if (isKA) return reweight(want, ok);
@@ -3163,7 +3186,7 @@ async function editExam(tab, col, draft) {
     h('h3', { class: 'sec low' }, 'Notenspiegel'), spiegel,
     h('div', { class: 'exgoal' }, goalType, goalVal, h('button', { type: 'button', onclick: suggest }, isKA ? 'Aufgaben neu gewichten' : 'Schlüssel vorschlagen')), goalMsg,
     h('p', { class: 'hint' }, isKA
-      ? 'Bei Klassenarbeiten bleibt der Notenschlüssel fest. Stattdessen werden die Höchstpunkte der Aufgaben verschoben (Gesamtpunkte bleiben) und die Punkte der Schüler anteilig umgerechnet. Eingetragene Noten ändern sich nur mit „Speichern und Noten neu berechnen“.'
+      ? 'Bei Klassenarbeiten bleibt der Notenschlüssel fest. Stattdessen werden die Höchstpunkte der Aufgaben verschoben (zuerst bei gleichen Gesamtpunkten, nur wenn nötig ändern sich auch diese etwas) und die Punkte der Schüler anteilig umgerechnet. Eingetragene Noten ändern sich nur mit „Speichern und Noten neu berechnen“.'
       : 'Die Punkte der Schüler bleiben gleich, nur die Notengrenzen verschieben sich. Eingetragene Noten ändern sich nur mit „Speichern und Noten neu berechnen“.')), actions);
   urls.forEach(u => URL.revokeObjectURL(u));
   if (r === 'hand') { ex.key = keyIns.map((k, i) => numP(k.value) ?? EXAM_KEY[i]); ex.tend = tend.checked; await handDialog(); return editExam(tab, col, ex); }
