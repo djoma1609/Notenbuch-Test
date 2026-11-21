@@ -3695,6 +3695,7 @@ function examDialog(cls, tab, st, col) {
   });
   // Seiten mit den gesetzten Punkten; Tippen setzt die gewählte Stelle.
   // Über dem Bild liegt eine Ebene mit Griffen je Anmerkung: ziehen = verschieben, antippen = ✎ und Löschen direkt daneben.
+  let penAt = 0;   // wann der Stift zuletzt geschrieben oder geschwebt hat (Handballen ignorieren)
   let sel = null;   // ausgewählte Anmerkung (Objekt aus d.r / d.m oder 'pos:<id>')
   const fromK = id => ((k && k.r) || []).some(x => x.id === id);
   const itemsOn = (pk, cv) => {
@@ -3737,6 +3738,7 @@ function examDialog(cls, tab, st, col) {
         const isSel = sel === it.ref;
         const box = h('div', { class: 'exhit' + (isSel ? ' sel' : ''), style: 'left:' + pct(it.x) + ';top:' + pct(it.y) + ';width:' + pct(it.w) + ';height:' + pct(it.h) });
         box.addEventListener('pointerdown', ev => {
+          if (ev.pointerType === 'touch' && Date.now() - penAt < 1500) { ev.preventDefault(); return; }   // Handballen beim Schreiben
           ev.preventDefault(); ev.stopPropagation();
           const b = cv.getBoundingClientRect(); let lx = ev.clientX, ly = ev.clientY, moved = false;
           const sx = ev.clientX, sy = ev.clientY;
@@ -3816,7 +3818,12 @@ function examDialog(cls, tab, st, col) {
     // Der Browser darf hier selbst nichts verschieben (sonst rutscht das Blatt beim Schreiben weg):
     // gescrollt wird nur, wenn ein Finger zieht – von Hand.
     let sw = null, sy0 = 0, st0 = 0;
-    const isPen = e => [...e.touches].some(t => t.touchType === 'stylus');
+    // Liegt beim Schreiben der Handballen auf, kommt er als Finger an – solange der Stift schreibt oder
+    // gerade über dem Bildschirm schwebt (bis 1,5 s danach), wird deshalb nicht mit dem Finger gescrollt.
+    const penNear = () => Date.now() - penAt < 1500;
+    scroller.addEventListener('pointermove', e => { if (e.pointerType === 'pen') { penAt = Date.now(); sw = null; } });
+    scroller.addEventListener('pointerdown', e => { if (e.pointerType === 'pen') { penAt = Date.now(); sw = null; } }, true);
+    const isPen = e => penNear() || [...e.touches].some(t => t.touchType === 'stylus');
     scroller.addEventListener('touchstart', e => {
       if (e.target.closest('.exhit, .extool')) { sw = null; return; }   // Anmerkung ziehen bzw. ✎/Löschen
       e.preventDefault();
