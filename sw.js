@@ -21,7 +21,7 @@ self.addEventListener('fetch', event => {
     const cache = await caches.open(CACHE);
     try {
       const fresh = await Promise.race([
-        fetch(req),
+        fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' }),   // beim Server nachfragen statt alte Kopie aus dem Browser nehmen
         new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
       ]);
       if (fresh.ok) cache.put(PAGE, fresh.clone());
