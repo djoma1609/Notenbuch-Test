@@ -406,7 +406,8 @@ dialog.dlg::-webkit-scrollbar, .exleft::-webkit-scrollbar, .exright::-webkit-scr
 .exfullwrap { max-width: 1100px; margin: 0 auto; }
 html, body, * { scrollbar-width: none; }   /* Bildlaufleisten nirgends zeigen – gescrollt wird trotzdem */
 ::-webkit-scrollbar { display: none; }
-.exfullcv { display: block; width: 100%; height: auto; background: #fff; touch-action: pan-x pan-y pinch-zoom; cursor: crosshair; }
+.exfullcv { display: block; width: 100%; height: auto; background: #fff; touch-action: none; cursor: crosshair; }
+.exfull, .exfullpg { touch-action: none; overscroll-behavior: contain; }
 .exam .exrow.exgrade input.grade { width: 46px; flex: none; text-align: center; padding: 8px 4px; }
 .exgrade .iconbtn { margin-left: auto; }
 .exbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px; padding: 0 0 8px; background: var(--panel); }
@@ -3811,12 +3812,22 @@ function examDialog(cls, tab, st, col) {
       if (d.ink.length !== n) { erased = true; paintOnly(); }
     };
     // Apple Pencil soll nicht scrollen, der Finger schon; mit dem Finger waagerecht wischen = Blatt wechseln.
-    let sw = null;
+    // Der Browser darf hier selbst nichts verschieben (sonst rutscht das Blatt beim Schreiben weg):
+    // gescrollt wird nur, wenn ein Finger zieht – von Hand.
+    let sw = null, sy0 = 0, st0 = 0;
+    const isPen = e => [...e.touches].some(t => t.touchType === 'stylus');
     scroller.addEventListener('touchstart', e => {
-      if ([...e.touches].some(t => t.touchType === 'stylus')) { e.preventDefault(); sw = null; return; }
-      sw = e.touches.length === 1 ? [e.touches[0].clientX, e.touches[0].clientY] : null;
+      if (e.target.closest('.exhit, .extool')) { sw = null; return; }   // Anmerkung ziehen bzw. ✎/Löschen
+      e.preventDefault();
+      if (isPen(e) || e.touches.length !== 1) { sw = null; return; }
+      sw = [e.touches[0].clientX, e.touches[0].clientY]; sy0 = e.touches[0].clientY; st0 = scroller.scrollTop;
     }, { passive: false });
-    scroller.addEventListener('touchmove', e => { if ([...e.touches].some(t => t.touchType === 'stylus')) e.preventDefault(); }, { passive: false });
+    scroller.addEventListener('touchmove', e => {
+      if (e.target.closest('.exhit, .extool')) return;
+      e.preventDefault();
+      if (sw && !isPen(e) && e.touches.length === 1) scroller.scrollTop = st0 - (e.touches[0].clientY - sy0);
+    }, { passive: false });
+    box.addEventListener('touchmove', e => { if (!e.target.closest('.exfullpg')) e.preventDefault(); }, { passive: false });
     scroller.addEventListener('touchend', e => {
       if (!sw || !e.changedTouches.length) return;
       const dx = e.changedTouches[0].clientX - sw[0], dy = e.changedTouches[0].clientY - sw[1]; sw = null;
