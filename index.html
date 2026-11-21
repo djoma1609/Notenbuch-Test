@@ -401,7 +401,10 @@ dialog.dlg::-webkit-scrollbar, .exleft::-webkit-scrollbar, .exright::-webkit-scr
 .exfullbar .grow { flex: 1; }
 .exfullpg { flex: 1; overflow: auto; padding: 12px; scrollbar-width: none; }
 .exfullpg::-webkit-scrollbar { display: none; }
-.exfullcv { display: block; width: 100%; max-width: 1100px; height: auto; margin: 0 auto; background: #fff; touch-action: pan-x pan-y pinch-zoom; cursor: crosshair; }
+.exfullwrap { max-width: 1100px; margin: 0 auto; }
+html, body, * { scrollbar-width: none; }   /* Bildlaufleisten nirgends zeigen – gescrollt wird trotzdem */
+::-webkit-scrollbar { display: none; }
+.exfullcv { display: block; width: 100%; height: auto; background: #fff; touch-action: pan-x pan-y pinch-zoom; cursor: crosshair; }
 .exam .exrow.exgrade input.grade { width: 46px; flex: none; text-align: center; padding: 8px 4px; }
 .exgrade .iconbtn { margin-left: auto; }
 .exbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px; padding: 0 0 8px; background: var(--panel); }
@@ -3720,79 +3723,21 @@ function examDialog(cls, tab, st, col) {
     drawTasks(); drawSpell(); drawMarks(); drawShow(); drawUndo(); refresh();
   };
   // Vollbild (lange auf eine Seite drücken): mit dem Stift frei korrigieren, mit dem Finger scrollen.
-  const openFull = (p, img) => {
-    const rot = +((getCell(tab, st.id, p.key.replace(':d:', ':r:')) || {}).v || 0);
-    const fc = h('canvas', { class: 'exfullcv', role: 'img', 'aria-label': 'Seite im Vollbild' });
-    let mode = 'pen', cur = null, erased = false;
-    const paintF = () => { scanDraw(fc, img, rot); examStamp(fc, ex, d, p.key, grade()); };
-    const penB = h('button', { type: 'button', class: 'expin on active' }, '✎ Stift');
-    const eraB = h('button', { type: 'button', class: 'expin on' }, 'Radierer');
-    const setMode = m => { mode = m; penB.classList.toggle('active', m === 'pen'); eraB.classList.toggle('active', m === 'erase'); };
-    penB.onclick = () => setMode('pen'); eraB.onclick = () => setMode('erase');
-    const fu = iconBtn('undo', 'Letzte Änderung rückgängig', () => { undo(); paintF(); syncB(); });
-    const fr = iconBtn('redo', 'Wiederherstellen', () => { redo(); paintF(); syncB(); });
-    const syncB = () => { fu.disabled = !hist.length; fr.disabled = !fut.length; };
-    const close = () => { box.remove(); paintPages(); drawUndo(); };
-    const box = h('div', { class: 'exfull' },
-      h('div', { class: 'exfullbar' }, iconBtn('close', 'Vollbild schließen', close), penB, eraB,
-        h('span', { class: 'hint grow' }, 'Stift schreibt, Finger scrollt'), fu, fr),
-      h('div', { class: 'exfullpg' }, fc));
-    const at = e => { const b = fc.getBoundingClientRect(); return [(e.clientX - b.left) / b.width, (e.clientY - b.top) / b.height]; };
-    const eraseAt = ([x, y]) => {
-      const tol = 0.015, n = (d.ink || []).length;
-      d.ink = (d.ink || []).filter(k => k.pg !== p.key || !k.s.some((v, j) => j % 2 === 0 && Math.hypot((v - x) * fc.width / fc.height, k.s[j + 1] - y) < tol));
-      if (d.ink.length !== n) { erased = true; paintF(); }
-    };
-    // Apple Pencil soll nicht scrollen, der Finger schon.
-    fc.addEventListener('touchstart', e => { if ([...e.touches].some(t => t.touchType === 'stylus')) e.preventDefault(); }, { passive: false });
-    fc.addEventListener('touchmove', e => { if ([...e.touches].some(t => t.touchType === 'stylus')) e.preventDefault(); }, { passive: false });
-    fc.addEventListener('pointerdown', e => {
-      if (e.pointerType === 'touch') return;
-      e.preventDefault(); try { fc.setPointerCapture(e.pointerId); } catch (x) {}
-      const pt = at(e);
-      if (mode === 'erase') { cur = 'erase'; eraseAt(pt); return; }
-      cur = { pg: p.key, w: 0.0022, s: [+pt[0].toFixed(4), +pt[1].toFixed(4)] };
-      d.ink = d.ink || []; d.ink.push(cur);
-    });
-    fc.addEventListener('pointermove', e => {
-      if (!cur) return;
-      const pt = at(e);
-      if (cur === 'erase') { eraseAt(pt); return; }
-      const n = cur.s.length, px = cur.s[n - 2], py = cur.s[n - 1];
-      if (Math.hypot((pt[0] - px) * fc.width / fc.height, pt[1] - py) < 0.0015) return;
-      const ctx = fc.getContext('2d');   // nur das neue Stück zeichnen, das ganze Blatt erst am Ende
-      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.strokeStyle = HAND_INK; ctx.lineCap = 'round'; ctx.lineWidth = Math.max(1.5, cur.w * fc.height);
-      ctx.beginPath(); ctx.moveTo(px * fc.width, py * fc.height); ctx.lineTo(pt[0] * fc.width, pt[1] * fc.height); ctx.stroke(); ctx.restore();
-      cur.s.push(+pt[0].toFixed(4), +pt[1].toFixed(4));
-    });
-    const up = () => {
-      if (!cur) return;
-      const was = cur; cur = null;
-      if (was === 'erase') { if (erased) { erased = false; store(); syncB(); } return; }
-      store(); paintF(); syncB();
-    };
-    fc.addEventListener('pointerup', up); fc.addEventListener('pointercancel', up);
-    fc.addEventListener('contextmenu', e => e.preventDefault());
-    (content.closest('dialog') || document.body).append(box);
-    paintF(); syncB();
-  };
-  pages.forEach((p, i) => {
-    const cv = h('canvas', { role: 'img', 'aria-label': 'Seite ' + (i + 1) }), note = h('p', { class: 'hint' }, 'Seite ' + (i + 1) + ' wird geladen …');
-    const layer = h('div', { class: 'exlayer' });
-    const img = new Image();
-    let url = null, dragging = false, raf = 0;
-    const paintOnly = () => { scanDraw(cv, img, +((getCell(tab, st.id, p.key.replace(':d:', ':r:')) || {}).v || 0)); examStamp(cv, ex, d, p.key, grade()); };
-    const drawHits = () => {
+  // Griffe über einer Seite: ziehen = verschieben, antippen = ✎ und Löschen direkt daneben.
+  const hitLayer = (cv, layer, pk, paintOnly) => {
+    let dragging = false, raf = 0;
+    return () => {
       if (dragging) return;
       const pct = v => (v * 100).toFixed(2) + '%';
-      layer.replaceChildren(...itemsOn(p.key, cv).flatMap(it => {
+      layer.replaceChildren(...itemsOn(pk, cv).flatMap(it => {
         const isSel = sel === it.ref;
         const box = h('div', { class: 'exhit' + (isSel ? ' sel' : ''), style: 'left:' + pct(it.x) + ';top:' + pct(it.y) + ';width:' + pct(it.w) + ';height:' + pct(it.h) });
         box.addEventListener('pointerdown', ev => {
           ev.preventDefault(); ev.stopPropagation();
           const b = cv.getBoundingClientRect(); let lx = ev.clientX, ly = ev.clientY, moved = false;
           const sx = ev.clientX, sy = ev.clientY;
-          box.setPointerCapture(ev.pointerId); dragging = true;
+          try { box.setPointerCapture(ev.pointerId); } catch (x) {}
+          dragging = true;
           const mv = e2 => {
             if (!moved && Math.hypot(e2.clientX - sx, e2.clientY - sy) < 6) return;
             moved = true;
@@ -3817,6 +3762,110 @@ function examDialog(cls, tab, st, col) {
         return [box, tool];
       }));
     };
+  };
+  // Vollbild (lange auf eine Seite drücken): mit dem Stift frei korrigieren, Anmerkungen verschieben und ändern,
+  // mit dem Finger scrollen, zum Blättern wischen oder ‹ › tippen.
+  const imgs = [];
+  const openFull = startIdx => {
+    let idx = startIdx, mode = 'pen', cur = null, erased = false;
+    const fc = h('canvas', { class: 'exfullcv', role: 'img', 'aria-label': 'Seite im Vollbild' });
+    const flayer = h('div', { class: 'exlayer' });
+    const pk = () => pages[idx].key;
+    const paintOnly = () => {
+      const img = imgs[idx]; if (!img || !img.naturalWidth) return;
+      scanDraw(fc, img, +((getCell(tab, st.id, pk().replace(':d:', ':r:')) || {}).v || 0)); examStamp(fc, ex, d, pk(), grade());
+    };
+    let drawHits = () => {};
+    fc.paint = () => { paintOnly(); drawHits(); syncB(); };
+    const penB = h('button', { type: 'button', class: 'expin on active' }, '✎ Stift');
+    const eraB = h('button', { type: 'button', class: 'expin on' }, 'Radierer');
+    const setMode = m => { mode = m; penB.classList.toggle('active', m === 'pen'); eraB.classList.toggle('active', m === 'erase'); };
+    penB.onclick = () => setMode('pen'); eraB.onclick = () => setMode('erase');
+    const fu = iconBtn('undo', 'Letzte Änderung rückgängig', () => { undo(); fc.paint(); });
+    const fr = iconBtn('redo', 'Wiederherstellen', () => { redo(); fc.paint(); });
+    const syncB = () => { fu.disabled = !hist.length; fr.disabled = !fut.length; };
+    const pgNo = h('span', { class: 'hint' });
+    const prevB = h('button', { type: 'button', class: 'expin on' }, '‹'), nextB = h('button', { type: 'button', class: 'expin on' }, '›');
+    const show = i => {
+      if (i < 0 || i >= pages.length) return;
+      idx = i; sel = null;
+      drawHits = hitLayer(fc, flayer, pk(), paintOnly);
+      pgNo.textContent = 'Blatt ' + (idx + 1) + ' von ' + pages.length;
+      prevB.disabled = idx === 0; nextB.disabled = idx === pages.length - 1;
+      scroller.scrollTop = 0; fc.paint();
+    };
+    prevB.onclick = () => show(idx - 1); nextB.onclick = () => show(idx + 1);
+    const close = () => { box.remove(); const k = canvases.indexOf(fc); if (k >= 0) canvases.splice(k, 1); sel = null; paintPages(); drawUndo(); };
+    const scroller = h('div', { class: 'exfullpg' }, h('div', { class: 'exwrap exfullwrap' }, fc, flayer));
+    const box = h('div', { class: 'exfull' },
+      h('div', { class: 'exfullbar' }, iconBtn('close', 'Vollbild schließen', close), penB, eraB, h('span', { class: 'grow' }),
+        pages.length > 1 ? prevB : null, pages.length > 1 ? pgNo : null, pages.length > 1 ? nextB : null, fu, fr),
+      scroller);
+    const at = e => { const b = fc.getBoundingClientRect(); return [(e.clientX - b.left) / b.width, (e.clientY - b.top) / b.height]; };
+    const eraseAt = ([x, y]) => {
+      const tol = 0.015, n = (d.ink || []).length;
+      d.ink = (d.ink || []).filter(k => k.pg !== pk() || !k.s.some((v, j) => j % 2 === 0 && Math.hypot((v - x) * fc.width / fc.height, k.s[j + 1] - y) < tol));
+      if (d.ink.length !== n) { erased = true; paintOnly(); }
+    };
+    // Apple Pencil soll nicht scrollen, der Finger schon; mit dem Finger waagerecht wischen = Blatt wechseln.
+    let sw = null;
+    scroller.addEventListener('touchstart', e => {
+      if ([...e.touches].some(t => t.touchType === 'stylus')) { e.preventDefault(); sw = null; return; }
+      sw = e.touches.length === 1 ? [e.touches[0].clientX, e.touches[0].clientY] : null;
+    }, { passive: false });
+    scroller.addEventListener('touchmove', e => { if ([...e.touches].some(t => t.touchType === 'stylus')) e.preventDefault(); }, { passive: false });
+    scroller.addEventListener('touchend', e => {
+      if (!sw || !e.changedTouches.length) return;
+      const dx = e.changedTouches[0].clientX - sw[0], dy = e.changedTouches[0].clientY - sw[1]; sw = null;
+      if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.5) show(idx + (dx < 0 ? 1 : -1));
+    });
+    const seg = (px, py, x, y, w) => {   // nur das neue Stück zeichnen, das ganze Blatt erst am Ende
+      const ctx = fc.getContext('2d');
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.strokeStyle = HAND_INK; ctx.lineCap = 'round'; ctx.lineWidth = Math.max(1.5, w * fc.height);
+      ctx.beginPath(); ctx.moveTo(px * fc.width, py * fc.height); ctx.lineTo(x * fc.width, y * fc.height); ctx.stroke(); ctx.restore();
+    };
+    fc.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'touch') return;
+      e.preventDefault(); try { fc.setPointerCapture(e.pointerId); } catch (x) {}
+      if (sel) { sel = null; drawHits(); }
+      const pt = at(e);
+      if (mode === 'erase') { cur = 'erase'; eraseAt(pt); return; }
+      cur = { pg: pk(), w: 0.0028, s: [+pt[0].toFixed(4), +pt[1].toFixed(4)] };
+      d.ink = d.ink || []; d.ink.push(cur);
+      seg(pt[0], pt[1], pt[0] + 0.0005, pt[1], cur.w);
+    });
+    fc.addEventListener('pointermove', e => {
+      if (!cur) return;
+      const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];   // alle Zwischenpunkte des Stifts, damit Schrift rund wird
+      for (const ev of (evs.length ? evs : [e])) {
+        const pt = at(ev);
+        if (cur === 'erase') { eraseAt(pt); continue; }
+        const n = cur.s.length, px = cur.s[n - 2], py = cur.s[n - 1];
+        if (Math.hypot((pt[0] - px) * fc.width / fc.height, pt[1] - py) < 0.0008) continue;
+        seg(px, py, pt[0], pt[1], cur.w);
+        cur.s.push(+pt[0].toFixed(4), +pt[1].toFixed(4));
+      }
+    });
+    const up = () => {
+      if (!cur) return;
+      const was = cur; cur = null;
+      if (was === 'erase') { if (erased) { erased = false; store(); syncB(); } return; }
+      store(); fc.paint();
+    };
+    fc.addEventListener('pointerup', up); fc.addEventListener('pointercancel', up);
+    fc.addEventListener('contextmenu', e => e.preventDefault());
+    fc.free = () => {};
+    canvases.push(fc);
+    (content.closest('dialog') || document.body).append(box);
+    show(startIdx);
+  };
+  pages.forEach((p, i) => {
+    const cv = h('canvas', { role: 'img', 'aria-label': 'Seite ' + (i + 1) }), note = h('p', { class: 'hint' }, 'Seite ' + (i + 1) + ' wird geladen …');
+    const layer = h('div', { class: 'exlayer' });
+    const img = new Image(); imgs[i] = img;
+    let url = null;
+    const paintOnly = () => { scanDraw(cv, img, +((getCell(tab, st.id, p.key.replace(':d:', ':r:')) || {}).v || 0)); examStamp(cv, ex, d, p.key, grade()); };
+    const drawHits = hitLayer(cv, layer, p.key, paintOnly);
     cv.paint = () => { if (!img.naturalWidth) return; paintOnly(); drawHits(); };
     cv.free = () => { if (url) URL.revokeObjectURL(url); };
     img.onload = () => { note.remove(); cv.paint(); };
@@ -3825,7 +3874,7 @@ function examDialog(cls, tab, st, col) {
     let lp = 0, lpAt = null, lpFired = false;
     cv.addEventListener('pointerdown', e => {
       lpFired = false; lpAt = [e.clientX, e.clientY]; clearTimeout(lp);
-      lp = setTimeout(() => { lpFired = true; if (img.naturalWidth) openFull(p, img); }, 550);
+      lp = setTimeout(() => { lpFired = true; if (img.naturalWidth) openFull(i); }, 550);
     });
     cv.addEventListener('pointermove', e => { if (lpAt && Math.hypot(e.clientX - lpAt[0], e.clientY - lpAt[1]) > 8) clearTimeout(lp); });
     ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => cv.addEventListener(t, () => { clearTimeout(lp); lpAt = null; }));
