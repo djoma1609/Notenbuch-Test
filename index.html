@@ -3638,7 +3638,7 @@ function examDialog(cls, tab, st, col) {
     pageBox.append(h('div', { class: 'scanpg' }, note, h('div', { class: 'scanimg' }, cv)));
   });
   // Anmerkungen auf dem Blatt ein- und ausblenden (bleiben gespeichert, nur nicht gezeichnet – auch nicht beim Teilen).
-  const HIDE_KINDS = [['pts', 'Punkte je Aufgabe'], ['sum', 'Gesamtpunkte'], ['note', 'Note'], ['m', 'Haken und f'], ['r', 'Rechtschreibung']];
+  const HIDE_KINDS = [['pts', 'Punkte je Aufgabe'], ['sum', 'Gesamtpunkte'], ['note', 'Note'], ['m', 'Markierung richtig und falsch'], ['r', 'Rechtschreibung']];
   const showBox = h('div', { class: 'exshow' }), showMsg = h('span', { class: 'hint' });
   const drawShow = () => {
     const hd = d.hide || {}, allOff = HIDE_KINDS.every(([id]) => hd[id]);
