@@ -408,6 +408,7 @@ html, body, * { scrollbar-width: none; }   /* Bildlaufleisten nirgends zeigen â€
 ::-webkit-scrollbar { display: none; }
 .exfullcv { display: block; width: 100%; height: auto; background: #fff; touch-action: none; cursor: crosshair; }
 .exfull, .exfullpg { touch-action: none; overscroll-behavior: contain; }
+.exfullopen { overflow: hidden !important; }
 .exam .exrow.exgrade input.grade { width: 46px; flex: none; text-align: center; padding: 8px 4px; }
 .exgrade .iconbtn { margin-left: auto; }
 .exbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px; padding: 0 0 8px; background: var(--panel); }
@@ -3798,7 +3799,7 @@ function examDialog(cls, tab, st, col) {
       scroller.scrollTop = 0; fc.paint();
     };
     prevB.onclick = () => show(idx - 1); nextB.onclick = () => show(idx + 1);
-    const close = () => { box.remove(); const k = canvases.indexOf(fc); if (k >= 0) canvases.splice(k, 1); sel = null; paintPages(); drawUndo(); };
+    const close = () => { box.remove(); (content.closest('dialog') || document.body).classList.remove('exfullopen'); const k = canvases.indexOf(fc); if (k >= 0) canvases.splice(k, 1); sel = null; paintPages(); drawUndo(); };
     const scroller = h('div', { class: 'exfullpg' }, h('div', { class: 'exwrap exfullwrap' }, fc, flayer));
     const box = h('div', { class: 'exfull' },
       h('div', { class: 'exfullbar' }, h('div', { class: 'exfl' }, iconBtn('close', 'Vollbild schlieÃŸen', close), penB, eraB),
@@ -3870,7 +3871,9 @@ function examDialog(cls, tab, st, col) {
     fc.addEventListener('contextmenu', e => e.preventDefault());
     fc.free = () => {};
     canvases.push(fc);
-    (content.closest('dialog') || document.body).append(box);
+    const host = content.closest('dialog') || document.body;
+    host.classList.add('exfullopen');   // das Fenster dahinter darf nicht mitscrollen
+    host.append(box);
     show(startIdx);
   };
   pages.forEach((p, i) => {
