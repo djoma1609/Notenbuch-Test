@@ -389,8 +389,11 @@ button.expin.active { outline: 2px solid var(--accent); opacity: 1; }
 dialog.dlg.examdlg { width: min(1100px, calc(100vw - 16px)); max-height: calc(100vh - 16px); }
 @media (min-width: 680px) {   /* auch iPad hochkant: Bearbeitung links, Arbeit rechts daneben */
   .exam { display: grid; grid-template-columns: minmax(250px, 300px) 1fr; gap: 14px; align-items: start; }
-  .exleft, .exright { max-height: calc(100vh - 150px); overflow: auto; }
+  .exleft, .exright { max-height: calc(100vh - 120px); overflow: auto; }
 }
+dialog.examdlg .dlg-actions { display: none; }   /* Voriger/Nächster stehen in der Leiste über der Arbeit */
+.exbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px; padding: 0 0 8px; background: var(--panel); }
+.exbar .grow { flex: 1; }
 @media (min-width: 1000px) {
   .exam { grid-template-columns: minmax(300px, 380px) 1fr; gap: 18px; }
 }
@@ -633,7 +636,8 @@ function dlg(title, content, actions) {
         resolve(v);
       };
       const run = async a => { const v = a.fn ? await a.fn() : a.value; if (v !== KEEP) close(v); };
-      const btns = actions.filter(a => !isCancel(a) && !a.modalOnly);
+      // Im aufgeklappten Bereich braucht es kein „Schließen“ – zugeklappt wird über die Überschrift.
+      const btns = actions.filter(a => !isCancel(a) && !a.modalOnly && a.label !== 'Schließen');
       host.replaceChildren(h('form', { class: 'inline', onsubmit: e => { e.preventDefault(); if (primary) run(primary); } }, content,
         btns.length ? h('div', { class: 'dlg-actions' }, btns.map(a =>
           h('button', { type: a.primary ? 'submit' : 'button', class: a.cls ? a.cls.replace('left', '').trim() : (a.primary ? 'primary' : ''), onclick: a.primary ? null : () => run(a) }, a.label))) : null));
@@ -1106,6 +1110,7 @@ ICONS.camera = '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l
 ICONS.image = '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>';
 ICONS.trash = '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>';
 ICONS.undo = '<polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>';
+ICONS.redo = '<polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/>';
 ICONS.inbox ='<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>';
 function iconBtn(name, label, onclick) {
   const b = h('button', { type: 'button', class: 'iconbtn', title: label, 'aria-label': label, onclick });
@@ -3515,10 +3520,11 @@ function examDialog(cls, tab, st, col) {
   let k = (getCell(tab, st.id, col.id + ':k') || {}).v || null;
   let placing = null;
   // Rückgängig: vor jedem Speichern wird der vorige Stand gemerkt (solange das Fenster offen ist).
-  let hist = [], last = null;
+  let hist = [], fut = [], last = null;
   const undoBtn = iconBtn('undo', 'Letzte Änderung rückgängig', () => undo());
-  const drawUndo = () => { undoBtn.disabled = !hist.length; };
-  const store = () => { if (last) { hist.push(last); if (hist.length > 100) hist.shift(); } last = examCopy(d); setCell(tab, st.id, col.id + ':p', examCopy(d)); save(); drawUndo(); };
+  const redoBtn = iconBtn('redo', 'Wiederherstellen', () => redo());
+  const drawUndo = () => { undoBtn.disabled = !hist.length; redoBtn.disabled = !fut.length; };
+  const store = () => { if (last) { hist.push(last); if (hist.length > 100) hist.shift(); } fut = []; last = examCopy(d); setCell(tab, st.id, col.id + ':p', examCopy(d)); save(); drawUndo(); };
   d.m = d.m || [];
   // Geöffnet = angesehen: die gelbe Markierung „bitte prüfen“ in der Tabelle verschwindet.
   if (k && Object.values(k.u || {}).some(Boolean) && !d.seen) { d.seen = true; store(); }
@@ -3551,6 +3557,9 @@ function examDialog(cls, tab, st, col) {
         inp.classList.remove('bad');
         if (v == null) delete d.p[t.id]; else d.p[t.id] = v;
         inp.value = v == null ? '' : fmtP(v);
+        // Noch kein Platz auf dem Blatt: an den rechten Rand der ersten Seite setzen, von dort verschieben.
+        if (v != null && pages.length && !d.pos[t.id]) d.pos[t.id] = { pg: pages[0].key, x: 0.86, y: Math.min(0.9, 0.08 + i * 0.06) };
+        if (pages.length && !d.pos.sum && examSum(ex, d) != null) d.pos.sum = { pg: pages[pages.length - 1].key, x: 0.6, y: 0.9 };
         store(); refresh();
       });
       inp.addEventListener('keydown', e => { if (e.key !== 'Enter') return; e.preventDefault(); const all = [...taskBox.querySelectorAll('input.expts')]; const nx = all[all.indexOf(inp) + 1]; if (nx) nx.focus(); else inp.blur(); });
@@ -3561,10 +3570,9 @@ function examDialog(cls, tab, st, col) {
         h('span', {}, 'Vorschlag: ' + fmtP(kp) + ' P.' + (k.u[t.id] ? ' (unsicher)' : '') + ' – ' + (k.w[t.id] || '')),
         d.p[t.id] === kp ? h('span', { class: 'hint' }, '✓') : h('button', { type: 'button', onclick: () => { take(t.id); } }, 'übernehmen'));
       return h('div', { class: 'extask' },
-        h('div', { class: 'exrow' }, h('span', { class: 'grow' }, h('b', {}, t.name)), inp, h('span', { class: 'hint' }, '/ ' + fmtP(t.max)), pages.length && !d.pos[t.id] && d.p[t.id] != null ? pin : null),   // 📍 nur, solange die Punkte noch keinen Platz auf dem Blatt haben
+        h('div', { class: 'exrow' }, h('span', { class: 'grow' }, h('b', {}, t.name)), inp, h('span', { class: 'hint' }, '/ ' + fmtP(t.max))),
         t.exp ? h('details', { class: 'exexp' }, h('summary', {}, 'Erwartung'), h('div', {}, t.exp)) : null, kiRow);
-    }), ...(pages.length && !d.pos.sum && examSum(ex, d) != null   // Summe und Note noch ohne Platz auf dem Blatt
-      ? [h('div', { class: 'exrow' }, h('button', { type: 'button', class: 'expin' + (placing === 'sum' ? ' active' : ''), onclick: () => { placing = placing === 'sum' ? null : 'sum'; drawTasks(); } }, '📍 Summe und Note auf das Blatt setzen'))] : []));
+    }));
     placeHint.textContent = !placing ? '' : /^m:/.test(placing) ? 'Jetzt im Scan an die Stelle tippen, an die das Zeichen soll (auf Höhe der Zeile).' : /^r/.test(placing) ? 'Jetzt im Scan genau unter den Anfang des falschen Wortes tippen (auf die Linie, auf der das Wort steht).'
       : 'Jetzt auf die Stelle im Scan tippen, an die ' + (placing === 'sum' ? 'Summe und Note' : 'die Punkte von „' + (ex.tasks.find(t => t.id === placing) || {}).name + '“') + ' sollen.';
   };
@@ -3675,9 +3683,10 @@ function examDialog(cls, tab, st, col) {
     return out;
   };
   const changed = () => { store(); drawTasks(); drawSpell(); drawMarks(); refresh(); };
-  const undo = () => {
-    if (!hist.length) return;
-    d = examCopy(hist.pop()); d.p = d.p || {}; d.pos = d.pos || {}; d.r = d.r || []; d.rx = d.rx || []; d.m = d.m || [];
+  const undo = () => { if (hist.length) { fut.push(examCopy(d)); restore(hist.pop()); } };
+  const redo = () => { if (fut.length) { hist.push(examCopy(d)); restore(fut.pop()); } };
+  const restore = v => {
+    d = examCopy(v); d.p = d.p || {}; d.pos = d.pos || {}; d.r = d.r || []; d.rx = d.rx || []; d.m = d.m || [];
     last = examCopy(d); setCell(tab, st.id, col.id + ':p', examCopy(d)); save();
     sel = null; placing = null; fb.value = d.g || '';
     drawTasks(); drawSpell(); drawMarks(); drawShow(); drawUndo(); refresh();
@@ -3792,15 +3801,16 @@ function examDialog(cls, tab, st, col) {
     else files.forEach(f => download(f, f.name, 'image/jpeg'));
   };
   drawTasks(); drawKi(); drawSpell(); drawMarks(); drawShow(); drawUndo(); paintHead();
+  // Voriger/Nächster: lösen die (ausgeblendeten) Knöpfe unten im Fenster aus – so bleibt alles auf einem Bildschirm.
+  const navBtn = (i, lab) => h('button', { type: 'button', onclick: e => { const b = e.target.closest('form').querySelectorAll('.dlg-actions button')[i - 1]; if (b) b.click(); } }, lab);
   const content = h('div', { class: 'exam' },
     h('div', { class: 'exleft' },
       h('p', { class: 'hint' }, cls.name + ' · ' + tab.name + ' · ' + col.name),
-      head, h('div', { class: 'exrow' }, h('span', { class: 'grow' }), gradeIn, gradeBtn, pages.length ? iconBtn('export', 'Korrigierte Seiten teilen oder sichern', share) : null),
+      head, h('div', { class: 'exrow' }, gradeIn, gradeBtn, pages.length ? iconBtn('export', 'Korrigierte Seiten teilen oder sichern', share) : null),
       kiBox, taskBox, markBox, spellBox,
-      h('div', { class: 'exrow' }, h('span', { class: 'grow' }), undoBtn),
       pages.length ? showBox : null,
       field('Rückmeldung', fb)),
-    h('div', { class: 'exright' }, placeHint,
+    h('div', { class: 'exright' }, h('div', { class: 'exbar' }, navBtn(1, '‹ Voriger'), navBtn(2, 'Nächster ›'), h('span', { class: 'grow' }), undoBtn, redoBtn), placeHint,
       pages.length ? pageBox : h('p', { class: 'hint' }, col.scan ? 'Noch kein Scan abgelegt.' : 'Für diese Leistung ist „Scans ablegen“ aus – Punkte lassen sich trotzdem eintragen.')));
   const pr = dlg('Korrektur – ' + st.name, content, [{ label: 'Schließen', value: null }, { label: '‹ Voriger', value: 'prev' }, { label: 'Nächster ›', value: 'next' }]);
   const dl = content.closest('dialog');
