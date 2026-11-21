@@ -387,10 +387,22 @@ button.expin.active { outline: 2px solid var(--accent); opacity: 1; }
 .explace { color: var(--accent); font-weight: 600; }
 .expages canvas { width: 100%; height: auto; display: block; cursor: crosshair; }
 dialog.dlg.examdlg { width: min(1100px, calc(100vw - 16px)); max-height: calc(100vh - 16px); }
-@media (min-width: 860px) {
-  .exam { display: grid; grid-template-columns: minmax(300px, 380px) 1fr; gap: 18px; align-items: start; }
-  .exright { max-height: calc(100vh - 170px); overflow: auto; }
+@media (min-width: 680px) {   /* auch iPad hochkant: Bearbeitung links, Arbeit rechts daneben */
+  .exam { display: grid; grid-template-columns: minmax(250px, 300px) 1fr; gap: 14px; align-items: start; }
+  .exleft, .exright { max-height: calc(100vh - 150px); overflow: auto; }
 }
+@media (min-width: 1000px) {
+  .exam { grid-template-columns: minmax(300px, 380px) 1fr; gap: 18px; }
+}
+.exleft { overflow-x: hidden; }
+.exshow button, .exspell button { white-space: normal; text-align: left; }
+.exwrap { position: relative; }
+.exlayer { position: absolute; inset: 0; pointer-events: none; }
+.exhit { position: absolute; pointer-events: auto; touch-action: none; cursor: grab; border-radius: 6px; border: 1.5px dashed transparent; }
+.exhit:hover { border-color: rgba(200, 16, 46, .35); }
+.exhit.sel { border-color: #c8102e; background: rgba(200, 16, 46, .06); }
+.extool { position: absolute; pointer-events: auto; display: flex; gap: 4px; transform: translate(6px, -100%); background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 3px; box-shadow: 0 2px 8px rgba(0,0,0,.18); z-index: 2; }
+.extool button { min-width: 36px; height: 36px; }
 .handgrid { display: grid; gap: 6px; }
 .handrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .handrow b { width: 2.6em; flex: none; text-align: center; }
@@ -3554,11 +3566,14 @@ function examDialog(cls, tab, st, col) {
         if (isProp || fromK(e.id)) d.rx.push(e.id);
         store(); drawSpell(); refresh();
       }));
+    // Übernommene Fehler werden direkt auf dem Blatt bearbeitet (antippen: ✎ / Löschen, ziehen: verschieben).
     spellBox.replaceChildren(...[
       h('h3', { class: 'sec low' }, 'Rechtschreibung' + (d.r.length ? ' – ' + d.r.length + ' markiert' : '')),
-      ...d.r.map(e => row(e, false)),
-      ...(props.length ? [h('p', { class: 'hint' }, props.length + ' Vorschläge:'), ...props.map(e => row(e, true)),
-        h('button', { type: 'button', onclick: () => { props.forEach(e => d.r.push(examCopy(e))); store(); drawSpell(); refresh(); } }, 'Alle Rechtschreib-Vorschläge übernehmen')] : []),
+      d.r.length && pages.length ? h('p', { class: 'hint' }, 'Zum Ändern oder Löschen die Markierung auf dem Blatt antippen, zum Verschieben ziehen.') : null,
+      ...(pages.length ? [] : d.r.map(e => row(e, false))),
+      ...(props.length ? [h('div', { class: 'exrow' }, h('span', { class: 'grow' }, props.length + ' Vorschläge'),
+          h('button', { type: 'button', onclick: () => { props.forEach(e => d.r.push(examCopy(e))); store(); drawSpell(); refresh(); } }, 'Alle übernehmen')),
+        h('details', {}, h('summary', { class: 'hint' }, 'Einzeln ansehen'), ...props.map(e => row(e, true)))] : []),
       pages.length ? h('button', { type: 'button', class: 'expin on' + (placing === 'rnew' ? ' active' : ''), onclick: () => { placing = placing === 'rnew' ? null : 'rnew'; drawTasks(); drawSpell(); } }, '+ Fehler selbst markieren') : null].filter(Boolean));
   };
   const take = tid => {
@@ -3603,16 +3618,76 @@ function examDialog(cls, tab, st, col) {
     setCell(tab, st.id, col.id, v); save(); paintHead();
   });
   // Seiten mit den gesetzten Punkten; Tippen setzt die gewählte Stelle.
+  // Über dem Bild liegt eine Ebene mit Griffen je Anmerkung: ziehen = verschieben, antippen = ✎ und Löschen direkt daneben.
+  let sel = null;   // ausgewählte Anmerkung (Objekt aus d.r / d.m oder 'pos:<id>')
+  const fromK = id => ((k && k.r) || []).some(x => x.id === id);
+  const itemsOn = (pk, cv) => {
+    const hd = d.hide || {}, sf = Math.max(28, cv.height * 0.03) / cv.height, hw = sf * cv.height / cv.width, out = [];
+    if (!hd.r) d.r.forEach(e => { if (e.pg === pk) out.push({ ref: e, x: e.x, y: e.y - (e.h || 0.02) * 2.6, w: Math.max(e.w || 0.12, hw * 2), h: (e.h || 0.02) * 3.1,
+      move: (dx, dy) => { e.x += dx; e.y += dy; e.moved = true; },
+      edit: async () => { const v = await askText('Berichtigung', 'Richtige Schreibweise (wird darübergeschrieben)', e.c, 'Übernehmen'); if (v == null) return; e.c = v.trim(); e.edit = true; },
+      del: () => { d.r = d.r.filter(x => x !== e); if (fromK(e.id)) d.rx.push(e.id); } }); });
+    if (!hd.m) d.m.forEach(e => { if (e.pg === pk) out.push({ ref: e, x: e.x - hw * 0.2, y: e.y - sf * 0.95, w: hw * (1.3 + (e.c ? 0.5 * e.c.length + 0.3 : 0)), h: sf * 1.2,
+      move: (dx, dy) => { e.x += dx; e.y += dy; },
+      edit: () => { e.t = e.t === 'r' ? 'f' : e.t === 'f' ? 'ff' : 'r'; if (e.t === 'r') delete e.c; },   // ✓ → f → ff → ✓
+      del: () => { d.m = d.m.filter(x => x !== e); } }); });
+    if (!hd.pts) ex.tasks.forEach(t => { const ps = d.pos[t.id]; if (ps && ps.pg === pk && d.p[t.id] != null) out.push({ ref: 'pos:' + t.id, x: ps.x, y: ps.y - sf * 0.45, w: hw * 2.4, h: sf * 1.2,
+      move: (dx, dy) => { ps.x += dx; ps.y += dy; },
+      edit: async () => { const v = await askText('Punkte – ' + t.name, 'Punkte (höchstens ' + fmtP(t.max) + ')', fmtP(d.p[t.id]), 'Übernehmen'); const n = v == null ? null : numP(v); if (n != null && n >= 0 && n <= t.max) d.p[t.id] = n; },
+      del: () => { delete d.pos[t.id]; } }); });
+    const sp = d.pos.sum;
+    if (sp && sp.pg === pk && (!hd.sum || !hd.note) && examSum(ex, d) != null) out.push({ ref: 'pos:sum', x: sp.x, y: sp.y - sf, w: hw * 4.2, h: sf * 2.8,
+      move: (dx, dy) => { sp.x += dx; sp.y += dy; }, del: () => { delete d.pos.sum; } });
+    return out;
+  };
+  const changed = () => { store(); drawTasks(); drawSpell(); drawMarks(); refresh(); };
   pages.forEach((p, i) => {
     const cv = h('canvas', { role: 'img', 'aria-label': 'Seite ' + (i + 1) }), note = h('p', { class: 'hint' }, 'Seite ' + (i + 1) + ' wird geladen …');
+    const layer = h('div', { class: 'exlayer' });
     const img = new Image();
-    let url = null;
-    cv.paint = () => { if (!img.naturalWidth) return; scanDraw(cv, img, +((getCell(tab, st.id, p.key.replace(':d:', ':r:')) || {}).v || 0)); examStamp(cv, ex, d, p.key, grade()); };
+    let url = null, dragging = false, raf = 0;
+    const paintOnly = () => { scanDraw(cv, img, +((getCell(tab, st.id, p.key.replace(':d:', ':r:')) || {}).v || 0)); examStamp(cv, ex, d, p.key, grade()); };
+    const drawHits = () => {
+      if (dragging) return;
+      const pct = v => (v * 100).toFixed(2) + '%';
+      layer.replaceChildren(...itemsOn(p.key, cv).flatMap(it => {
+        const isSel = sel === it.ref;
+        const box = h('div', { class: 'exhit' + (isSel ? ' sel' : ''), style: 'left:' + pct(it.x) + ';top:' + pct(it.y) + ';width:' + pct(it.w) + ';height:' + pct(it.h) });
+        box.addEventListener('pointerdown', ev => {
+          ev.preventDefault(); ev.stopPropagation();
+          const b = cv.getBoundingClientRect(); let lx = ev.clientX, ly = ev.clientY, moved = false;
+          const sx = ev.clientX, sy = ev.clientY;
+          box.setPointerCapture(ev.pointerId); dragging = true;
+          const mv = e2 => {
+            if (!moved && Math.hypot(e2.clientX - sx, e2.clientY - sy) < 6) return;
+            moved = true;
+            const dx = (e2.clientX - lx) / b.width, dy = (e2.clientY - ly) / b.height; lx = e2.clientX; ly = e2.clientY;
+            it.move(dx, dy); it.x += dx; it.y += dy;
+            box.style.left = pct(it.x); box.style.top = pct(it.y);
+            if (!raf) raf = requestAnimationFrame(() => { raf = 0; paintOnly(); });
+          };
+          const up = () => {
+            box.removeEventListener('pointermove', mv); box.removeEventListener('pointerup', up); box.removeEventListener('pointercancel', up);
+            dragging = false;
+            if (moved) { changed(); return; }
+            sel = sel === it.ref ? null : it.ref; paintPages();
+          };
+          box.addEventListener('pointermove', mv); box.addEventListener('pointerup', up); box.addEventListener('pointercancel', up);
+        });
+        if (!isSel) return [box];
+        const tool = h('div', { class: 'extool', style: 'left:' + pct(Math.min(it.x + it.w, 0.9)) + ';top:' + pct(it.y) },
+          it.edit ? h('button', { type: 'button', title: 'Ändern', onclick: async e => { e.stopPropagation(); await it.edit(); changed(); } }, '✎') : null,
+          iconBtn('trash', 'Entfernen', () => { it.del(); sel = null; changed(); }));
+        tool.addEventListener('pointerdown', e => e.stopPropagation());
+        return [box, tool];
+      }));
+    };
+    cv.paint = () => { if (!img.naturalWidth) return; paintOnly(); drawHits(); };
     cv.free = () => { if (url) URL.revokeObjectURL(url); };
     img.onload = () => { note.remove(); cv.paint(); };
     scanBlobUrl(p.name).then(u => { url = u; img.src = u; }).catch(e => { note.textContent = 'Seite ' + (i + 1) + ': ' + e.message; });
     cv.addEventListener('click', e => {
-      if (!placing) return;
+      if (!placing) { if (sel) { sel = null; paintPages(); } return; }
       const b = cv.getBoundingClientRect();
       const fx = Math.round((e.clientX - b.left) / b.width * 1000) / 1000, fy = Math.round((e.clientY - b.top) / b.height * 1000) / 1000;
       if (placing.startsWith('r:')) {   // Rechtschreibfehler verschieben
@@ -3635,7 +3710,7 @@ function examDialog(cls, tab, st, col) {
       store(); drawTasks(); refresh();
     });
     canvases.push(cv);
-    pageBox.append(h('div', { class: 'scanpg' }, note, h('div', { class: 'scanimg' }, cv)));
+    pageBox.append(h('div', { class: 'scanpg' }, note, h('div', { class: 'scanimg' }, h('div', { class: 'exwrap' }, cv, layer))));
   });
   // Anmerkungen auf dem Blatt ein- und ausblenden (bleiben gespeichert, nur nicht gezeichnet – auch nicht beim Teilen).
   const HIDE_KINDS = [['pts', 'Punkte je Aufgabe'], ['sum', 'Gesamtpunkte'], ['note', 'Note'], ['m', 'Markierung richtig und falsch'], ['r', 'Rechtschreibung']];
