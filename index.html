@@ -202,6 +202,11 @@ button.scn.on { background: var(--soft); border: 1.5px solid var(--accent); colo
 button.pts { min-width: 26px; height: 26px; padding: 0 5px; border-radius: 7px; font-size: 12px; font-weight: 600; line-height: 1; flex: none; color: #a39d92; border: 1.5px dashed #b9b4aa; background: transparent; }
 button.pts.on { background: var(--soft); border: 1.5px solid var(--accent); color: var(--accent); }
 button.pts.ki { border-style: solid; color: var(--accent); }
+button.pts.prop { color: #c8102e; border: 2px solid #c8102e; border-radius: 999px; background: #fff; }
+td.cell input.grade.prop:placeholder-shown { border: 2px solid #c8102e; border-radius: 999px; background: #fff; }
+td.cell input.grade.prop::placeholder { color: #c8102e; opacity: 1; font-weight: 700; }
+td.cell.check { background: #fff1b8; }
+.masked td.cell input.grade::placeholder { color: transparent !important; }
 .scanpg { border: 1px solid var(--line); border-radius: 10px; margin: 0 0 14px; overflow: hidden; background: var(--panel); }
 .scanhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 4px 12px; font-size: 13px; color: var(--muted); }
 .scanimg { overflow: auto; max-height: 75vh; }
@@ -2000,14 +2005,22 @@ function renderGrades(panel, cls, tab) {
           paintScn();
         }
         // Korrektur mit Punkten (nur wenn ein Erwartungshorizont angelegt ist).
-        let pts = null;
+        // Vorschläge (noch nicht übernommen) stehen rot umrandet; Unsicheres ist gelb hinterlegt, bis die Arbeit geöffnet wurde.
+        let pts = null, check = false;
         if (col.exam) {
-          const sum = examSum(col.exam, examData(tab, st.id, col)), kv = getCell(tab, st.id, col.id + ':k');
-          pts = h('button', { class: 'pts' + (sum != null ? ' on' : kv ? ' ki' : ''), type: 'button', onclick: () => examFlow(cls, tab, st, col) }, sum != null ? fmtP(sum) : 'P');
-          const label = 'Korrigieren' + (sum != null ? ' (' + fmtP(sum) + ' Punkte)' : kv ? ' (Vorschlag der KI liegt vor)' : '') + ': ' + col.name + ' – ' + st.name;
+          const dd = examData(tab, st.id, col), sum = examSum(col.exam, dd), kv = (getCell(tab, st.id, col.id + ':k') || {}).v;
+          const ksum = kv ? examSum(col.exam, kv) : null;
+          const prop = sum == null && ksum != null;
+          pts = h('button', { class: 'pts' + (sum != null ? ' on' : prop ? ' prop' : ''), type: 'button', onclick: () => examFlow(cls, tab, st, col) }, sum != null ? fmtP(sum) : prop ? fmtP(ksum) : 'P');
+          const label = 'Korrigieren' + (sum != null ? ' (' + fmtP(sum) + ' Punkte)' : prop ? ' (Vorschlag: ' + fmtP(ksum) + ' Punkte)' : '') + ': ' + col.name + ' – ' + st.name;
           pts.title = label; pts.setAttribute('aria-label', label);
+          if (!c && kv) {
+            const pg = examGrade(col.exam, sum != null ? sum : ksum);
+            if (pg) { inp.placeholder = pg; inp.classList.add('prop'); inp.title = 'Vorschlag: ' + pg + ' – noch nicht eingetragen'; }
+          }
+          check = !!kv && Object.values(kv.u || {}).some(Boolean) && !dd.seen;
         }
-        return h('td', { class: 'cell' }, h('span', { class: 'gwrap' }, inp, sig, scn, pts), ts, sigTs);
+        return h('td', { class: 'cell' + (check ? ' check' : ''), title: check ? 'Bitte genauer prüfen: unsichere Stellen' : null }, h('span', { class: 'gwrap' }, inp, sig, scn, pts), ts, sigTs);
       }), defTds);
   }));
   const tfoot = h('tfoot', {}, h('tr', {}, h('td', { class: 'name' }, 'Klassenschnitt'),
@@ -3051,7 +3064,7 @@ async function editExam(tab, col, draft) {
    so sieht es geschrieben aus und nicht gestempelt. Höhe 1 = Kästchen, Grundlinie bei 0,75. */
 /* Gruppen im Handschrift-Fenster; Buchstaben in Druckschrift für berichtigte Wörter über Rechtschreibfehlern. */
 const HAND_SETS = [
-  { name: 'Ziffern und Zeichen', n: 3, chars: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '/', ',', '.', '+', '-', 'P.', 'Note'] },
+  { name: 'Ziffern und Zeichen', n: 3, chars: ['✓', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '/', ',', '.', '+', '-', 'P.', 'Note'] },
   { name: 'Kleinbuchstaben (Druckschrift)', n: 2, chars: [...'abcdefghijklmnopqrstuvwxyzäöüß'] },
   { name: 'Großbuchstaben (Druckschrift)', n: 2, chars: [...'ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜ'] }
 ];
@@ -3168,6 +3181,16 @@ function handText(ctx, text, x, y, size, seed, glyphs) {
 function examStamp(cv, ex, d, pageKey, grade) {
   const ctx = cv.getContext('2d'), size = Math.max(28, cv.height * 0.03);
   ctx.setTransform(1, 0, 0, 1, 0, 0);   // scanDraw lässt die Drehung stehen
+  // Haken (richtig) und f (falsch) neben jeder Teilantwort; (x, y) = links auf der Grundlinie.
+  const g = (S.settings.hand || {}).g || {};
+  (d.m || []).forEach((e, i) => {
+    if (e.pg !== pageKey) return;
+    const x = e.x * cv.width, y = e.y * cv.height, s = size * 0.95;
+    if (e.t === 'f') { handText(ctx, 'f', x, y, s, 70 + i); return; }
+    if (g['✓'] && g['✓'].length) { handText(ctx, '✓', x, y, s, 70 + i); return; }
+    ctx.save(); ctx.strokeStyle = HAND_INK; ctx.lineWidth = s * 0.07; ctx.lineCap = ctx.lineJoin = 'round';   // Ersatz-Haken
+    ctx.beginPath(); ctx.moveTo(x, y - s * 0.28); ctx.lineTo(x + s * 0.18, y); ctx.lineTo(x + s * 0.55, y - s * 0.62); ctx.stroke(); ctx.restore();
+  });
   ex.tasks.forEach((t, i) => {
     const pos = (d.pos || {})[t.id];
     if (!pos || pos.pg !== pageKey || d.p[t.id] == null) return;
@@ -3315,6 +3338,9 @@ function examDialog(cls, tab, st, col) {
   let k = (getCell(tab, st.id, col.id + ':k') || {}).v || null;
   let placing = null;
   const store = () => { setCell(tab, st.id, col.id + ':p', examCopy(d)); save(); };
+  d.m = d.m || [];
+  // Geöffnet = angesehen: die gelbe Markierung „bitte prüfen“ in der Tabelle verschwindet.
+  if (k && Object.values(k.u || {}).some(Boolean) && !d.seen) { d.seen = true; store(); }
   const head = h('div', { class: 'exsum' }), kiMsg = h('span', { class: 'hint' }), placeHint = h('p', { class: 'hint explace' });
   const gradeIn = h('input', { type: 'text', class: 'grade', maxlength: 2, autocomplete: 'off', 'aria-label': 'Note' });
   const gradeBtn = h('button', { type: 'button', class: 'primary' });
@@ -3359,6 +3385,16 @@ function examDialog(cls, tab, st, col) {
     placeHint.textContent = !placing ? '' : /^r/.test(placing) ? 'Jetzt im Scan genau unter den Anfang des falschen Wortes tippen (auf die Linie, auf der das Wort steht).'
       : 'Jetzt auf die Stelle im Scan tippen, an die ' + (placing === 'sum' ? 'Summe und Note' : 'die Punkte von „' + (ex.tasks.find(t => t.id === placing) || {}).name + '“') + ' sollen.';
   };
+  // Haken und f: kommen mit dem Vorschlag, lassen sich übernehmen oder wieder entfernen.
+  const markBox = h('div', { class: 'exspell' });
+  const drawMarks = () => {
+    const km = (k && k.m) || [], cnt = l => { const r = l.filter(e => e.t !== 'f').length; return r + ' ✓ und ' + (l.length - r) + ' f'; };
+    markBox.replaceChildren(...(d.m.length
+      ? [h('div', { class: 'exrow' }, h('span', { class: 'grow' }, 'Auf dem Scan: ' + cnt(d.m)),
+          h('button', { type: 'button', onclick: () => { d.m = []; store(); drawMarks(); refresh(); } }, 'Entfernen'))]
+      : km.length ? [h('div', { class: 'exrow' }, h('span', { class: 'grow' }, 'Vorschlag: ' + cnt(km)),
+          h('button', { type: 'button', onclick: () => { d.m = examCopy(km); store(); drawMarks(); refresh(); } }, 'Übernehmen'))] : []));
+  };
   // Rechtschreibung: Vorschläge übernehmen, ändern, verschieben oder ablehnen.
   const spellBox = h('div', { class: 'exspell' });
   const drawSpell = () => {
@@ -3378,12 +3414,12 @@ function examDialog(cls, tab, st, col) {
         if (isProp || fromK(e.id)) d.rx.push(e.id);
         store(); drawSpell(); refresh();
       }));
-    spellBox.replaceChildren(
+    spellBox.replaceChildren(...[
       h('h3', { class: 'sec low' }, 'Rechtschreibung' + (d.r.length ? ' – ' + d.r.length + ' markiert' : '')),
       ...d.r.map(e => row(e, false)),
       ...(props.length ? [h('p', { class: 'hint' }, props.length + ' Vorschläge:'), ...props.map(e => row(e, true)),
         h('button', { type: 'button', onclick: () => { props.forEach(e => d.r.push(examCopy(e))); store(); drawSpell(); refresh(); } }, 'Alle Rechtschreib-Vorschläge übernehmen')] : []),
-      pages.length ? h('button', { type: 'button', class: 'expin on' + (placing === 'rnew' ? ' active' : ''), onclick: () => { placing = placing === 'rnew' ? null : 'rnew'; drawTasks(); drawSpell(); } }, '+ Fehler selbst markieren') : null);
+      pages.length ? h('button', { type: 'button', class: 'expin on' + (placing === 'rnew' ? ' active' : ''), onclick: () => { placing = placing === 'rnew' ? null : 'rnew'; drawTasks(); drawSpell(); } }, '+ Fehler selbst markieren') : null].filter(Boolean));
   };
   const take = tid => {
     d.p[tid] = k.p[tid];
@@ -3396,7 +3432,8 @@ function examDialog(cls, tab, st, col) {
     if (k.pos.sum) d.pos.sum = k.pos.sum;
     if (k.g && !(d.g || '').trim()) { d.g = k.g; fb.value = k.g; }
     (k.r || []).forEach(e => { if (!d.r.some(x => x.id === e.id) && !d.rx.includes(e.id)) d.r.push(examCopy(e)); });
-    store(); drawTasks(); drawSpell(); refresh();
+    if (!d.m.length && (k.m || []).length) d.m = examCopy(k.m);
+    store(); drawTasks(); drawSpell(); drawMarks(); refresh();
   };
   const kiBox = h('div', { class: 'exkibar' });
   const drawKi = () => {
@@ -3470,12 +3507,12 @@ function examDialog(cls, tab, st, col) {
     if (navigator.canShare && navigator.canShare({ files })) { try { await navigator.share({ files }); } catch (e) {} }
     else files.forEach(f => download(f, f.name, 'image/jpeg'));
   };
-  drawTasks(); drawKi(); drawSpell(); paintHead();
+  drawTasks(); drawKi(); drawSpell(); drawMarks(); paintHead();
   const content = h('div', { class: 'exam' },
     h('div', { class: 'exleft' },
       h('p', { class: 'hint' }, cls.name + ' · ' + tab.name + ' · ' + col.name),
       head, h('div', { class: 'exrow' }, h('span', { class: 'grow' }), gradeIn, gradeBtn),
-      kiBox, taskBox, spellBox,
+      kiBox, taskBox, markBox, spellBox,
       pages.length ? h('div', { class: 'exrow' }, h('button', { type: 'button', class: 'expin' + (d.pos.sum ? ' on' : ''), onclick: () => { placing = placing === 'sum' ? null : 'sum'; drawTasks(); } }, '📍 Stelle für Summe und Note'),
         h('span', { class: 'grow' }), iconBtn('export', 'Korrigierte Seiten teilen oder sichern', share)) : null,
       field('Rückmeldung', fb)),
@@ -3486,6 +3523,42 @@ function examDialog(cls, tab, st, col) {
   if (dl) dl.classList.add('examdlg');
   if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   return pr.then(r => { if (fb.value !== (examData(tab, st.id, col).g || '')) { d.g = fb.value; store(); } canvases.forEach(c => c.free()); return r; });
+}
+
+/* Offene Vorschläge einer Leistung: Schüler mit Vorschlag, bei denen Punkte oder Note noch fehlen. */
+function examPending(cls, tab, col) {
+  return cls.students.filter(st => {
+    const k = (getCell(tab, st.id, col.id + ':k') || {}).v;
+    if (!k) return false;
+    const d = examData(tab, st.id, col);
+    return !(d.p && Object.keys(d.p).length) || !getCell(tab, st.id, col.id);
+  });
+}
+/* Alle offenen Vorschläge übernehmen: Punkte, Stellen, Haken/f, Rechtschreibung, Rückmeldung und die
+   Note nach Notenschlüssel. Was die Lehrkraft schon selbst eingetragen hat, bleibt unverändert. Rückgängig möglich. */
+function examAcceptAll(cls, tab, col) {
+  const before = [];
+  let ns = 0, ng = 0;
+  for (const st of examPending(cls, tab, col)) {
+    const k = getCell(tab, st.id, col.id + ':k').v, pc = getCell(tab, st.id, col.id + ':p'), cg = getCell(tab, st.id, col.id);
+    before.push({ sid: st.id, p: pc ? examCopy(pc.v) : null, g: cg ? cg.v : null });
+    const d = examData(tab, st.id, col);
+    if (!(d.p && Object.keys(d.p).length)) {
+      d.p = examCopy(k.p || {});
+      d.pos = Object.assign({}, k.pos || {}, d.pos || {});
+      d.r = d.r || []; d.rx = d.rx || [];
+      (k.r || []).forEach(e => { if (!d.r.some(x => x.id === e.id) && !d.rx.includes(e.id)) d.r.push(examCopy(e)); });
+      if (!(d.m && d.m.length)) d.m = examCopy(k.m || []);
+      if (!(d.g || '').trim() && k.g) d.g = k.g;
+      setCell(tab, st.id, col.id + ':p', examCopy(d)); ns++;
+    }
+    if (!cg) { const g = examGrade(col.exam, examSum(col.exam, d)); if (g) { setCell(tab, st.id, col.id, g); ng++; } }
+  }
+  save(); render();
+  undoBar(ns + ' Korrekturen und ' + ng + ' Noten übernommen', () => {
+    before.forEach(b => { setCell(tab, b.sid, col.id + ':p', b.p); setCell(tab, b.sid, col.id, b.g); });
+    save(); render();
+  });
 }
 
 /* ---------- Korrekturen holen ----------
@@ -3558,8 +3631,21 @@ async function fetchCorrections(cls, tab) {
     });
     return h('div', { class: 'exrow inboxrow' }, h('span', { class: 'grow' }, h('b', {}, col.name), h('br'), col.exam ? st : h('span', { class: 'hint' }, 'Zuerst in der Leistung „Mit Punkten korrigieren“ einschalten und die Musterlösung ablegen.')), btn);
   }) : h('p', { class: 'hint' }, 'In diesem Fach hat noch keine Leistung „Scans ablegen“.'));
+  // Unten: geholte Vorschläge einer Leistung auf einmal übernehmen (Punkte und Noten).
+  const acceptBox = h('div', {});
+  const drawAccept = () => {
+    const list = tab ? tab.columns.filter(c => c.exam && examPending(cls, tab, c).length) : [];
+    acceptBox.replaceChildren(...(list.length ? list.map(col => {
+      const n = examPending(cls, tab, col).length;
+      return h('div', { class: 'exrow inboxrow' }, h('span', { class: 'grow' }, h('b', {}, col.name), h('br'),
+        h('span', { class: 'hint' }, n + ' Vorschläge offen. Gelb markierte Schüler bitte danach einzeln ansehen.')),
+        h('button', { type: 'button', class: 'primary', onclick: () => { examAcceptAll(cls, tab, col); drawAccept(); } }, 'Alle übernehmen'));
+    }) : [h('p', { class: 'hint' }, 'Keine offenen Vorschläge.')]));
+  };
+  drawAccept();
   const p = dlg('Korrektur', h('div', {}, h('h3', { class: 'sec' }, 'Korrektur anstoßen'), orderBox,
-    h('h3', { class: 'sec low' }, 'Ergebnisse holen'), msg, box), [{ label: 'Schließen', value: null }]);
+    h('h3', { class: 'sec low' }, 'Ergebnisse holen'), msg, box,
+    h('h3', { class: 'sec low' }, 'Punkte und Noten übernehmen'), acceptBox), [{ label: 'Schließen', value: null }]);
   try {
     const token = await getToken();
     const items = await inboxList(token);
@@ -3580,7 +3666,7 @@ async function fetchCorrections(cls, tab) {
       const btn = h('button', { type: 'button', class: 'primary', disabled: !(j.cls && j.tab) }, 'Holen');
       btn.addEventListener('click', async () => {
         btn.disabled = true;
-        try { st.textContent = await importCorrection(j, t => { st.textContent = t; }); btn.textContent = '✓'; }
+        try { st.textContent = await importCorrection(j, t => { st.textContent = t; }); btn.textContent = '✓'; drawAccept(); }
         catch (e) { st.textContent = 'Fehler: ' + e.message; btn.disabled = false; }
       });
       return h('div', { class: 'exrow inboxrow' }, h('span', { class: 'grow' }, h('b', {}, what), h('br'), (j.job.schueler || []).length + ' Arbeiten', h('br'), st), btn);
@@ -3636,6 +3722,8 @@ async function importCorrection(j, progress) {
       const k = { p: {}, w: s.k.w || {}, u: s.k.u || {}, g: String(s.k.g || ''), pos: {}, at: nowIso(), von: 'Claude' };
       for (const t of col.exam.tasks) { const v = (s.k.p || {})[t.id]; if (v != null) k.p[t.id] = Math.max(0, Math.min(t.max, Math.round(+v * 2) / 2)); }
       for (const [id, o] of Object.entries(s.k.pos || {})) { const q = place(o); if (q) k.pos[id] = q; }
+      // Haken / f je Teilantwort: { seite, x, y, t: 'r' (richtig) | 'f' (falsch) }
+      k.m = (s.k.m || []).map(e => { const q = place(e); return q && { pg: q.pg, x: q.x, y: q.y, t: e.t === 'f' ? 'f' : 'r' }; }).filter(Boolean);
       // Rechtschreibfehler: { seite, x, y (Anfang des Wortes auf der Grundlinie), w, h, falsch, richtig }
       k.r = (s.k.r || []).map(e => { const q = place(e); return q && { id: uid(), pg: q.pg, x: q.x, y: q.y,
         w: Math.max(0.01, Math.min(0.9, +e.w || 0.12)), h: Math.max(0.005, Math.min(0.1, +e.h || 0.02)), f: String(e.falsch || ''), c: String(e.richtig || '') }; }).filter(Boolean);
