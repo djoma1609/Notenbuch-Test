@@ -377,6 +377,12 @@ dialog.dlg.examdlg { width: min(1100px, calc(100vw - 16px)); max-height: calc(10
 .handcell { display: inline-flex; align-items: flex-start; }
 .handcell .iconbtn { width: 28px; height: 28px; }
 canvas.handpad { border: 1px solid var(--line); border-radius: 8px; background: #fff; touch-action: none; }
+.handbox, .handbox *, .expages, .expages * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.handset { margin: 10px 0; }
+.handset summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
+.exerr { font-size: 14px; border-top: 1px solid var(--line); padding-top: 4px; }
+.exerr s { color: var(--bad); }
+.exerr.prop { background: var(--soft); border-radius: 8px; padding: 4px 6px; }
 canvas.handprev { width: 100%; max-width: 640px; height: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
 </style>
 </head>
@@ -3043,8 +3049,14 @@ async function editExam(tab, col, draft) {
    Die Lehrkraft schreibt jedes Zeichen bis zu dreimal mit Finger oder Stift. Gespeichert werden
    die Striche (S.settings.hand), beim Setzen wird je Stelle eine der Varianten genommen –
    so sieht es geschrieben aus und nicht gestempelt. Höhe 1 = Kästchen, Grundlinie bei 0,75. */
-const HAND_CHARS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '/', ',', '+', '-', 'P.', 'Note'];
-const HAND_W = ch => ch === 'Note' ? 2.4 : ch === 'P.' ? 1.3 : 1;
+/* Gruppen im Handschrift-Fenster; Buchstaben in Druckschrift für berichtigte Wörter über Rechtschreibfehlern. */
+const HAND_SETS = [
+  { name: 'Ziffern und Zeichen', n: 3, chars: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '/', ',', '.', '+', '-', 'P.', 'Note'] },
+  { name: 'Kleinbuchstaben (Druckschrift)', n: 2, chars: [...'abcdefghijklmnopqrstuvwxyzäöüß'] },
+  { name: 'Großbuchstaben (Druckschrift)', n: 2, chars: [...'ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜ'] }
+];
+const HAND_CHARS = HAND_SETS.flatMap(s => s.chars);
+const HAND_W = ch => ch === 'Note' ? 2.4 : ch === 'P.' ? 1.3 : /[mwMW]/.test(ch) ? 1.2 : 1;
 const HAND_INK = '#c8102e';
 function handPad(ch, glyph, onChange) {
   const bw = HAND_W(ch), H = 84, W = Math.round(H * bw), R = 2;
@@ -3072,7 +3084,10 @@ function handPad(ch, glyph, onChange) {
     strokes.forEach(s => { for (let i = 0; i < s.length; i += 2) { lo = Math.min(lo, s[i]); hi = Math.max(hi, s[i]); } });
     return { w: r3(hi - lo + 0.1), s: strokes.map(s => s.map((v, i) => r3(i % 2 ? v : v - lo + 0.05))) };
   };
-  cv.addEventListener('pointerdown', e => { e.preventDefault(); cv.setPointerCapture(e.pointerId); cur = at(e); strokes.push(cur); paint(); });
+  // iPad: kein Markieren, keine Lupe, kein Scrollen beim Schreiben
+  ['touchstart', 'touchmove'].forEach(t => cv.addEventListener(t, e => e.preventDefault(), { passive: false }));
+  cv.addEventListener('contextmenu', e => e.preventDefault());
+  cv.addEventListener('pointerdown', e => { e.preventDefault(); try { cv.setPointerCapture(e.pointerId); } catch (x) {} cur = at(e); strokes.push(cur); paint(); });
   cv.addEventListener('pointermove', e => {
     if (!cur) return;
     const [x, y] = at(e), n = cur.length;
@@ -3087,19 +3102,27 @@ function handPad(ch, glyph, onChange) {
 async function handDialog() {
   const old = (S.settings.hand || {}).g || {};
   const work = {};
-  HAND_CHARS.forEach(ch => { work[ch] = [0, 1, 2].map(k => (old[ch] || [])[k] || null); });
-  const prev = h('canvas', { class: 'handprev', width: 640, height: 110 });
+  HAND_SETS.forEach(set => set.chars.forEach(ch => { work[ch] = Array.from({ length: set.n }, (_, k) => (old[ch] || [])[k] || null); }));
+  const prev = h('canvas', { class: 'handprev', width: 640, height: 200 });
   const showPrev = () => {
     const ctx = prev.getContext('2d'); ctx.clearRect(0, 0, prev.width, prev.height);
     const g = {}; HAND_CHARS.forEach(ch => { const v = work[ch].filter(Boolean); if (v.length) g[ch] = v; });
     handText(ctx, '3/4', 20, 70, 60, 1, g); handText(ctx, '17,5/24 P.', 170, 70, 60, 2, g); handText(ctx, 'Note 2-', 470, 70, 60, 3, g);
+    handText(ctx, 'Freiheit Verantwortung', 20, 170, 60, 4, g);
   };
-  const rows = HAND_CHARS.map(ch => h('div', { class: 'handrow' }, h('b', {}, ch === '-' ? '−' : ch),
-    [0, 1, 2].map(k => handPad(ch, work[ch][k], g => { work[ch][k] = g; showPrev(); }))));
+  const done = set => set.chars.filter(ch => work[ch].some(Boolean)).length;
+  const groups = HAND_SETS.map((set, gi) => {
+    const sum = h('summary', {});
+    const count = () => { sum.textContent = set.name + ' – ' + done(set) + ' von ' + set.chars.length; };
+    count();
+    const rows = set.chars.map(ch => h('div', { class: 'handrow' }, h('b', {}, ch === '-' ? '−' : ch),
+      work[ch].map((_, k) => handPad(ch, work[ch][k], g => { work[ch][k] = g; showPrev(); count(); }))));
+    return h('details', { class: 'handset', open: gi === 0 && done(set) < set.chars.length }, sum, h('div', { class: 'handgrid' }, rows));
+  });
   showPrev();
-  const r = await dlg('Meine Handschrift', h('div', {},
-    h('p', { class: 'hint' }, 'Jedes Zeichen bis zu dreimal schreiben, so wie Sie auf dem Blatt korrigieren (mit Stift oder Finger). Die gestrichelte Linie ist die Grundlinie. Mehrere Varianten wirken natürlicher.'),
-    h('div', { class: 'handgrid' }, rows),
+  const r = await dlg('Meine Handschrift', h('div', { class: 'handbox' },
+    h('p', { class: 'hint' }, 'Jedes Zeichen so schreiben, wie Sie auf dem Blatt korrigieren (mit Stift oder Finger). Die gestrichelte Linie ist die Grundlinie; g, j, p, q, y reichen darunter. Mehrere Varianten wirken natürlicher. Die Buchstaben braucht das Notenbuch, um berichtigte Wörter über Rechtschreibfehler zu schreiben.'),
+    groups,
     h('h3', { class: 'sec low' }, 'Vorschau'), prev), [{ label: 'Abbrechen', value: null }, { label: 'Speichern', primary: true, fn: () => 'ok' }]);
   if (r !== 'ok') return;
   const g = {};
@@ -3117,7 +3140,8 @@ function handText(ctx, text, x, y, size, seed, glyphs) {
   ctx.save();
   ctx.strokeStyle = ctx.fillStyle = HAND_INK; ctx.lineCap = ctx.lineJoin = 'round'; ctx.lineWidth = size * 0.05;
   while (i < text.length) {
-    const tok = text.startsWith('Note', i) ? 'Note' : text.startsWith('P.', i) ? 'P.' : text[i] === '−' ? '-' : text[i];
+    const word = w => text.startsWith(w, i) && (i + w.length === text.length || text[i + w.length] === ' ');   // „Note“, „P.“ nur als eigenes Wort
+    const tok = word('Note') ? 'Note' : word('P.') ? 'P.' : text[i] === '−' ? '-' : text[i];
     i += tok === 'Note' ? 4 : tok === 'P.' ? 2 : 1;
     if (tok === ' ') { x += size * 0.35; continue; }
     const vars = g[tok];
@@ -3148,6 +3172,18 @@ function examStamp(cv, ex, d, pageKey, grade) {
     const pos = (d.pos || {})[t.id];
     if (!pos || pos.pg !== pageKey || d.p[t.id] == null) return;
     handText(ctx, fmtP(d.p[t.id]) + '/' + fmtP(t.max), pos.x * cv.width, pos.y * cv.height + size * 0.3, size, i + 1);
+  });
+  // Rechtschreibfehler: rot unterstrichen (leicht unregelmäßig wie von Hand), Berichtigung in Druckschrift darüber.
+  // (x, y) = Anfang des falschen Wortes auf der Grundlinie, w/h = Breite/Höhe des Wortes – alles als Anteil der Seite.
+  (d.r || []).forEach((e, i) => {
+    if (e.pg !== pageKey) return;
+    const x0 = e.x * cv.width, x1 = (e.x + (e.w || 0.12)) * cv.width, y = e.y * cv.height, hh = Math.max(14, (e.h || 0.02) * cv.height);
+    const wob = n => (((i + 3) * 9301 + n * 49297) % 233280) / 233280 - 0.5;
+    ctx.save(); ctx.strokeStyle = HAND_INK; ctx.lineWidth = Math.max(2.5, size * 0.06); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x0, y + hh * 0.15 + wob(1) * 4);
+    ctx.quadraticCurveTo((x0 + x1) / 2, y + hh * 0.25 + wob(2) * 6, x1, y + hh * 0.12 + wob(3) * 4);
+    ctx.stroke(); ctx.restore();
+    if (e.c) handText(ctx, e.c, x0, y - hh * 1.05, Math.max(26, hh * 1.25), 50 + i);
   });
   const sp = (d.pos || {}).sum, sum = examSum(ex, d);
   if (sp && sp.pg === pageKey && sum != null) {
@@ -3275,6 +3311,7 @@ function examDialog(cls, tab, st, col) {
   const ex = col.exam, pages = col.scan ? scanPages(tab, st.id, col.id) : [];
   let d = examData(tab, st.id, col);
   d.p = d.p || {}; d.pos = d.pos || {};
+  d.r = d.r || []; d.rx = d.rx || [];   // übernommene Rechtschreibfehler / abgelehnte Vorschläge (daraus lernt Claude)
   let k = (getCell(tab, st.id, col.id + ':k') || {}).v || null;
   let placing = null;
   const store = () => { setCell(tab, st.id, col.id + ':p', examCopy(d)); save(); };
@@ -3319,7 +3356,34 @@ function examDialog(cls, tab, st, col) {
         h('div', { class: 'exrow' }, h('span', { class: 'grow' }, h('b', {}, t.name)), inp, h('span', { class: 'hint' }, '/ ' + fmtP(t.max)), pages.length ? pin : null),
         t.exp ? h('details', { class: 'exexp' }, h('summary', {}, 'Erwartung'), h('div', {}, t.exp)) : null, kiRow);
     }));
-    placeHint.textContent = placing ? 'Jetzt auf die Stelle im Scan tippen, an die ' + (placing === 'sum' ? 'Summe und Note' : 'die Punkte von „' + (ex.tasks.find(t => t.id === placing) || {}).name + '“') + ' sollen.' : '';
+    placeHint.textContent = !placing ? '' : /^r/.test(placing) ? 'Jetzt im Scan genau unter den Anfang des falschen Wortes tippen (auf die Linie, auf der das Wort steht).'
+      : 'Jetzt auf die Stelle im Scan tippen, an die ' + (placing === 'sum' ? 'Summe und Note' : 'die Punkte von „' + (ex.tasks.find(t => t.id === placing) || {}).name + '“') + ' sollen.';
+  };
+  // Rechtschreibung: Vorschläge übernehmen, ändern, verschieben oder ablehnen.
+  const spellBox = h('div', { class: 'exspell' });
+  const drawSpell = () => {
+    const props = ((k && k.r) || []).filter(e => !d.r.some(x => x.id === e.id) && !d.rx.includes(e.id));
+    const fromK = id => ((k && k.r) || []).some(x => x.id === id);
+    const pinBtn = e => h('button', { type: 'button', class: 'expin on' + (placing === 'r:' + e.id ? ' active' : ''), title: 'Auf dem Scan verschieben',
+      onclick: () => { placing = placing === 'r:' + e.id ? null : 'r:' + e.id; drawTasks(); drawSpell(); } }, '📍');
+    const row = (e, isProp) => h('div', { class: 'exrow exerr' + (isProp ? ' prop' : '') },
+      h('span', { class: 'grow' }, e.f ? h('s', {}, e.f) : null, e.f ? ' → ' : '', h('b', {}, e.c || '')),
+      isProp ? h('button', { type: 'button', onclick: () => { d.r.push(examCopy(e)); store(); drawSpell(); refresh(); } }, 'übernehmen') : null,
+      !isProp ? h('button', { type: 'button', title: 'Berichtigung ändern', onclick: async () => {
+        const v = await askText('Berichtigung', 'Richtige Schreibweise (wird darübergeschrieben)', e.c, 'Übernehmen');
+        if (v == null) return; e.c = v.trim(); e.edit = true; store(); drawSpell(); refresh(); } }, '✎') : null,
+      !isProp && pages.length ? pinBtn(e) : null,
+      iconBtn('trash', isProp ? 'Vorschlag ablehnen' : 'Entfernen', () => {
+        if (!isProp) d.r = d.r.filter(x => x !== e);
+        if (isProp || fromK(e.id)) d.rx.push(e.id);
+        store(); drawSpell(); refresh();
+      }));
+    spellBox.replaceChildren(
+      h('h3', { class: 'sec low' }, 'Rechtschreibung' + (d.r.length ? ' – ' + d.r.length + ' markiert' : '')),
+      ...d.r.map(e => row(e, false)),
+      ...(props.length ? [h('p', { class: 'hint' }, props.length + ' Vorschläge:'), ...props.map(e => row(e, true)),
+        h('button', { type: 'button', onclick: () => { props.forEach(e => d.r.push(examCopy(e))); store(); drawSpell(); refresh(); } }, 'Alle Rechtschreib-Vorschläge übernehmen')] : []),
+      pages.length ? h('button', { type: 'button', class: 'expin on' + (placing === 'rnew' ? ' active' : ''), onclick: () => { placing = placing === 'rnew' ? null : 'rnew'; drawTasks(); drawSpell(); } }, '+ Fehler selbst markieren') : null);
   };
   const take = tid => {
     d.p[tid] = k.p[tid];
@@ -3331,7 +3395,8 @@ function examDialog(cls, tab, st, col) {
     ex.tasks.forEach(t => { if (k.p[t.id] != null) { d.p[t.id] = k.p[t.id]; if (k.pos[t.id]) d.pos[t.id] = k.pos[t.id]; } });
     if (k.pos.sum) d.pos.sum = k.pos.sum;
     if (k.g && !(d.g || '').trim()) { d.g = k.g; fb.value = k.g; }
-    store(); drawTasks(); refresh();
+    (k.r || []).forEach(e => { if (!d.r.some(x => x.id === e.id) && !d.rx.includes(e.id)) d.r.push(examCopy(e)); });
+    store(); drawTasks(); drawSpell(); refresh();
   };
   const kiBox = h('div', { class: 'exkibar' });
   const drawKi = () => {
@@ -3372,7 +3437,22 @@ function examDialog(cls, tab, st, col) {
     cv.addEventListener('click', e => {
       if (!placing) return;
       const b = cv.getBoundingClientRect();
-      d.pos[placing] = { pg: p.key, x: Math.round((e.clientX - b.left) / b.width * 1000) / 1000, y: Math.round((e.clientY - b.top) / b.height * 1000) / 1000 };
+      const fx = Math.round((e.clientX - b.left) / b.width * 1000) / 1000, fy = Math.round((e.clientY - b.top) / b.height * 1000) / 1000;
+      if (placing.startsWith('r:')) {   // Rechtschreibfehler verschieben
+        const er = d.r.find(x => 'r:' + x.id === placing);
+        if (er) { er.pg = p.key; er.x = fx; er.y = fy; er.moved = true; }
+        placing = null; store(); drawTasks(); drawSpell(); refresh(); return;
+      }
+      if (placing === 'rnew') {   // eigenen Fehler markieren
+        placing = null; drawTasks(); drawSpell();
+        askText('Rechtschreibfehler', 'Richtige Schreibweise (wird darübergeschrieben)', '', 'Markieren').then(c => {
+          if (!c || !c.trim()) return;
+          d.r.push({ id: uid(), pg: p.key, x: fx, y: fy, w: 0.15, h: 0.022, f: '', c: c.trim(), own: true });
+          store(); drawSpell(); refresh();
+        });
+        return;
+      }
+      d.pos[placing] = { pg: p.key, x: fx, y: fy };
       const idx = ex.tasks.findIndex(t => t.id === placing);
       placing = idx >= 0 && ex.tasks[idx + 1] && !d.pos[ex.tasks[idx + 1].id] ? ex.tasks[idx + 1].id : null;   // gleich die nächste Aufgabe
       store(); drawTasks(); refresh();
@@ -3390,12 +3470,12 @@ function examDialog(cls, tab, st, col) {
     if (navigator.canShare && navigator.canShare({ files })) { try { await navigator.share({ files }); } catch (e) {} }
     else files.forEach(f => download(f, f.name, 'image/jpeg'));
   };
-  drawTasks(); drawKi(); paintHead();
+  drawTasks(); drawKi(); drawSpell(); paintHead();
   const content = h('div', { class: 'exam' },
     h('div', { class: 'exleft' },
       h('p', { class: 'hint' }, cls.name + ' · ' + tab.name + ' · ' + col.name),
       head, h('div', { class: 'exrow' }, h('span', { class: 'grow' }), gradeIn, gradeBtn),
-      kiBox, taskBox,
+      kiBox, taskBox, spellBox,
       pages.length ? h('div', { class: 'exrow' }, h('button', { type: 'button', class: 'expin' + (d.pos.sum ? ' on' : ''), onclick: () => { placing = placing === 'sum' ? null : 'sum'; drawTasks(); } }, '📍 Stelle für Summe und Note'),
         h('span', { class: 'grow' }), iconBtn('export', 'Korrigierte Seiten teilen oder sichern', share)) : null,
       field('Rückmeldung', fb)),
@@ -3415,7 +3495,7 @@ function examDialog(cls, tab, st, col) {
    { klasse, fach, leistung | leistungName, halbjahr?, exam?: { text, tasks: [{ id, name, max, exp }] },
      musterloesung?: [Datei …], schueler: [{ id, dateien: [Datei … in Seitenfolge],
        k?: { p: { Aufgabe: Punkte }, w: { Aufgabe: Begründung }, u: { Aufgabe: unsicher }, g: Rückmeldung,
-             pos: { Aufgabe | sum: { seite, x, y } } } }] }
+             pos: { Aufgabe | sum: { seite, x, y } }, r: [{ seite, x, y, w, h, falsch, richtig }] } }] }
    Beim Holen werden die Dateien (PDF oder Bild) zu Scan-Seiten des Schülers, die Vorschläge stehen im
    Korrekturfenster. Eingetragen wird nichts – das macht die Lehrkraft. Danach wird der Auftrag als
    erledigt umbenannt, die Kopien im Eingang werden entfernt (die Originale bleiben in „Klausuren“). */
@@ -3556,6 +3636,9 @@ async function importCorrection(j, progress) {
       const k = { p: {}, w: s.k.w || {}, u: s.k.u || {}, g: String(s.k.g || ''), pos: {}, at: nowIso(), von: 'Claude' };
       for (const t of col.exam.tasks) { const v = (s.k.p || {})[t.id]; if (v != null) k.p[t.id] = Math.max(0, Math.min(t.max, Math.round(+v * 2) / 2)); }
       for (const [id, o] of Object.entries(s.k.pos || {})) { const q = place(o); if (q) k.pos[id] = q; }
+      // Rechtschreibfehler: { seite, x, y (Anfang des Wortes auf der Grundlinie), w, h, falsch, richtig }
+      k.r = (s.k.r || []).map(e => { const q = place(e); return q && { id: uid(), pg: q.pg, x: q.x, y: q.y,
+        w: Math.max(0.01, Math.min(0.9, +e.w || 0.12)), h: Math.max(0.005, Math.min(0.1, +e.h || 0.02)), f: String(e.falsch || ''), c: String(e.richtig || '') }; }).filter(Boolean);
       setCell(tab, st.id, col.id + ':k', k);
     }
     save();
