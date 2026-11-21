@@ -398,7 +398,9 @@ dialog.dlg::-webkit-scrollbar, .exleft::-webkit-scrollbar, .exright::-webkit-scr
 .exwrap, .exfull { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .exfull { position: fixed; inset: 0; z-index: 20; background: var(--panel); display: flex; flex-direction: column; }
 .exfullbar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
-.exfullbar .grow { flex: 1; }
+.exfullbar { display: grid; grid-template-columns: 1fr auto 1fr; }
+.exfl, .exfc, .exfullnav { display: flex; align-items: center; gap: 8px; }
+.exfullnav { justify-content: center; padding: 8px 14px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
 .exfullpg { flex: 1; overflow: auto; padding: 12px; scrollbar-width: none; }
 .exfullpg::-webkit-scrollbar { display: none; }
 .exfullwrap { max-width: 1100px; margin: 0 auto; }
@@ -3798,9 +3800,10 @@ function examDialog(cls, tab, st, col) {
     const close = () => { box.remove(); const k = canvases.indexOf(fc); if (k >= 0) canvases.splice(k, 1); sel = null; paintPages(); drawUndo(); };
     const scroller = h('div', { class: 'exfullpg' }, h('div', { class: 'exwrap exfullwrap' }, fc, flayer));
     const box = h('div', { class: 'exfull' },
-      h('div', { class: 'exfullbar' }, iconBtn('close', 'Vollbild schließen', close), penB, eraB, h('span', { class: 'grow' }),
-        pages.length > 1 ? prevB : null, pages.length > 1 ? pgNo : null, pages.length > 1 ? nextB : null, fu, fr),
-      scroller);
+      h('div', { class: 'exfullbar' }, h('div', { class: 'exfl' }, iconBtn('close', 'Vollbild schließen', close), penB, eraB),
+        h('div', { class: 'exfc' }, fu, fr), h('div', {})),
+      scroller,
+      pages.length > 1 ? h('div', { class: 'exfullnav' }, prevB, pgNo, nextB) : null);
     const at = e => { const b = fc.getBoundingClientRect(); return [(e.clientX - b.left) / b.width, (e.clientY - b.top) / b.height]; };
     const eraseAt = ([x, y]) => {
       const tol = 0.015, n = (d.ink || []).length;
