@@ -395,6 +395,13 @@ dialog.examdlg .dlg-actions { display: none; }   /* Voriger/Nächster stehen lin
 /* Bildlaufleisten unsichtbar – gescrollt wird trotzdem */
 dialog.dlg, .exleft, .exright { scrollbar-width: none; }
 dialog.dlg::-webkit-scrollbar, .exleft::-webkit-scrollbar, .exright::-webkit-scrollbar { display: none; }
+.exwrap, .exfull { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.exfull { position: fixed; inset: 0; z-index: 20; background: var(--panel); display: flex; flex-direction: column; }
+.exfullbar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.exfullbar .grow { flex: 1; }
+.exfullpg { flex: 1; overflow: auto; padding: 12px; scrollbar-width: none; }
+.exfullpg::-webkit-scrollbar { display: none; }
+.exfullcv { display: block; width: 100%; max-width: 1100px; height: auto; margin: 0 auto; background: #fff; touch-action: pan-x pan-y pinch-zoom; cursor: crosshair; }
 .exam .exrow.exgrade input.grade { width: 46px; flex: none; text-align: center; padding: 8px 4px; }
 .exgrade .iconbtn { margin-left: 16px; }
 .exbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px; padding: 0 0 8px; background: var(--panel); }
@@ -3383,6 +3390,15 @@ function examStamp(cv, ex, d, pageKey, grade) {
     if (hide.pts || !pos || pos.pg !== pageKey || d.p[t.id] == null) return;
     handText(ctx, fmtP(d.p[t.id]) + '/' + fmtP(t.max), pos.x * cv.width, pos.y * cv.height + size * 0.3, size, i + 1);
   });
+  // Mit dem Stift frei geschrieben (Vollbild): Striche als Anteil der Seite.
+  if (!hide.ink) (d.ink || []).forEach(k => {
+    if (k.pg !== pageKey || !k.s || k.s.length < 2) return;
+    ctx.save(); ctx.strokeStyle = HAND_INK; ctx.lineCap = ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(1.5, (k.w || 0.0022) * cv.height);
+    ctx.beginPath(); ctx.moveTo(k.s[0] * cv.width, k.s[1] * cv.height);
+    for (let j = 2; j < k.s.length; j += 2) ctx.lineTo(k.s[j] * cv.width, k.s[j + 1] * cv.height);
+    if (k.s.length === 2) ctx.lineTo(k.s[0] * cv.width + 0.5, k.s[1] * cv.height);
+    ctx.stroke(); ctx.restore();
+  });
   // Rechtschreibfehler: rot unterstrichen (leicht unregelmäßig wie von Hand), Berichtigung in Druckschrift darüber.
   // (x, y) = Anfang des falschen Wortes auf der Grundlinie, w/h = Breite/Höhe des Wortes – alles als Anteil der Seite.
   (hide.r ? [] : d.r || []).forEach((e, i) => {
@@ -3529,7 +3545,13 @@ function examDialog(cls, tab, st, col) {
   const undoBtn = iconBtn('undo', 'Letzte Änderung rückgängig', () => undo());
   const redoBtn = iconBtn('redo', 'Wiederherstellen', () => redo());
   const drawUndo = () => { undoBtn.disabled = !hist.length; redoBtn.disabled = !fut.length; };
-  const store = () => { if (last) { hist.push(last); if (hist.length > 100) hist.shift(); } fut = []; last = examCopy(d); setCell(tab, st.id, col.id + ':p', examCopy(d)); save(); drawUndo(); };
+  // Ändern sich die Punkte und war die eingetragene Note die bisher vorgeschlagene, wird sie mitgeführt.
+  const syncGrade = prev => {
+    const cell = getCell(tab, st.id, col.id); if (!cell || !prev) return;
+    const og = examGrade(ex, examSum(ex, prev)), ng = examGrade(ex, examSum(ex, d));
+    if (og && ng && og !== ng && String(cell.v) === og) setCell(tab, st.id, col.id, ng);
+  };
+  const store = () => { syncGrade(last); if (last) { hist.push(last); if (hist.length > 100) hist.shift(); } fut = []; last = examCopy(d); setCell(tab, st.id, col.id + ':p', examCopy(d)); save(); drawUndo(); };
   d.m = d.m || [];
   // Geöffnet = angesehen: die gelbe Markierung „bitte prüfen“ in der Tabelle verschwindet.
   if (k && Object.values(k.u || {}).some(Boolean) && !d.seen) { d.seen = true; store(); }
@@ -3691,10 +3713,68 @@ function examDialog(cls, tab, st, col) {
   const undo = () => { if (hist.length) { fut.push(examCopy(d)); restore(hist.pop()); } };
   const redo = () => { if (fut.length) { hist.push(examCopy(d)); restore(fut.pop()); } };
   const restore = v => {
+    const prev = examCopy(d);
     d = examCopy(v); d.p = d.p || {}; d.pos = d.pos || {}; d.r = d.r || []; d.rx = d.rx || []; d.m = d.m || [];
-    last = examCopy(d); setCell(tab, st.id, col.id + ':p', examCopy(d)); save();
+    syncGrade(prev); last = examCopy(d); setCell(tab, st.id, col.id + ':p', examCopy(d)); save();
     sel = null; placing = null; fb.value = d.g || '';
     drawTasks(); drawSpell(); drawMarks(); drawShow(); drawUndo(); refresh();
+  };
+  // Vollbild (lange auf eine Seite drücken): mit dem Stift frei korrigieren, mit dem Finger scrollen.
+  const openFull = (p, img) => {
+    const rot = +((getCell(tab, st.id, p.key.replace(':d:', ':r:')) || {}).v || 0);
+    const fc = h('canvas', { class: 'exfullcv', role: 'img', 'aria-label': 'Seite im Vollbild' });
+    let mode = 'pen', cur = null, erased = false;
+    const paintF = () => { scanDraw(fc, img, rot); examStamp(fc, ex, d, p.key, grade()); };
+    const penB = h('button', { type: 'button', class: 'expin on active' }, '✎ Stift');
+    const eraB = h('button', { type: 'button', class: 'expin on' }, 'Radierer');
+    const setMode = m => { mode = m; penB.classList.toggle('active', m === 'pen'); eraB.classList.toggle('active', m === 'erase'); };
+    penB.onclick = () => setMode('pen'); eraB.onclick = () => setMode('erase');
+    const fu = iconBtn('undo', 'Letzte Änderung rückgängig', () => { undo(); paintF(); syncB(); });
+    const fr = iconBtn('redo', 'Wiederherstellen', () => { redo(); paintF(); syncB(); });
+    const syncB = () => { fu.disabled = !hist.length; fr.disabled = !fut.length; };
+    const close = () => { box.remove(); paintPages(); drawUndo(); };
+    const box = h('div', { class: 'exfull' },
+      h('div', { class: 'exfullbar' }, iconBtn('close', 'Vollbild schließen', close), penB, eraB,
+        h('span', { class: 'hint grow' }, 'Stift schreibt, Finger scrollt'), fu, fr),
+      h('div', { class: 'exfullpg' }, fc));
+    const at = e => { const b = fc.getBoundingClientRect(); return [(e.clientX - b.left) / b.width, (e.clientY - b.top) / b.height]; };
+    const eraseAt = ([x, y]) => {
+      const tol = 0.015, n = (d.ink || []).length;
+      d.ink = (d.ink || []).filter(k => k.pg !== p.key || !k.s.some((v, j) => j % 2 === 0 && Math.hypot((v - x) * fc.width / fc.height, k.s[j + 1] - y) < tol));
+      if (d.ink.length !== n) { erased = true; paintF(); }
+    };
+    // Apple Pencil soll nicht scrollen, der Finger schon.
+    fc.addEventListener('touchstart', e => { if ([...e.touches].some(t => t.touchType === 'stylus')) e.preventDefault(); }, { passive: false });
+    fc.addEventListener('touchmove', e => { if ([...e.touches].some(t => t.touchType === 'stylus')) e.preventDefault(); }, { passive: false });
+    fc.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'touch') return;
+      e.preventDefault(); try { fc.setPointerCapture(e.pointerId); } catch (x) {}
+      const pt = at(e);
+      if (mode === 'erase') { cur = 'erase'; eraseAt(pt); return; }
+      cur = { pg: p.key, w: 0.0022, s: [+pt[0].toFixed(4), +pt[1].toFixed(4)] };
+      d.ink = d.ink || []; d.ink.push(cur);
+    });
+    fc.addEventListener('pointermove', e => {
+      if (!cur) return;
+      const pt = at(e);
+      if (cur === 'erase') { eraseAt(pt); return; }
+      const n = cur.s.length, px = cur.s[n - 2], py = cur.s[n - 1];
+      if (Math.hypot((pt[0] - px) * fc.width / fc.height, pt[1] - py) < 0.0015) return;
+      const ctx = fc.getContext('2d');   // nur das neue Stück zeichnen, das ganze Blatt erst am Ende
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.strokeStyle = HAND_INK; ctx.lineCap = 'round'; ctx.lineWidth = Math.max(1.5, cur.w * fc.height);
+      ctx.beginPath(); ctx.moveTo(px * fc.width, py * fc.height); ctx.lineTo(pt[0] * fc.width, pt[1] * fc.height); ctx.stroke(); ctx.restore();
+      cur.s.push(+pt[0].toFixed(4), +pt[1].toFixed(4));
+    });
+    const up = () => {
+      if (!cur) return;
+      const was = cur; cur = null;
+      if (was === 'erase') { if (erased) { erased = false; store(); syncB(); } return; }
+      store(); paintF(); syncB();
+    };
+    fc.addEventListener('pointerup', up); fc.addEventListener('pointercancel', up);
+    fc.addEventListener('contextmenu', e => e.preventDefault());
+    (content.closest('dialog') || document.body).append(box);
+    paintF(); syncB();
   };
   pages.forEach((p, i) => {
     const cv = h('canvas', { role: 'img', 'aria-label': 'Seite ' + (i + 1) }), note = h('p', { class: 'hint' }, 'Seite ' + (i + 1) + ' wird geladen …');
@@ -3741,7 +3821,17 @@ function examDialog(cls, tab, st, col) {
     cv.free = () => { if (url) URL.revokeObjectURL(url); };
     img.onload = () => { note.remove(); cv.paint(); };
     scanBlobUrl(p.name).then(u => { url = u; img.src = u; }).catch(e => { note.textContent = 'Seite ' + (i + 1) + ': ' + e.message; });
+    // Lange drücken (ohne zu bewegen) öffnet die Seite im Vollbild.
+    let lp = 0, lpAt = null, lpFired = false;
+    cv.addEventListener('pointerdown', e => {
+      lpFired = false; lpAt = [e.clientX, e.clientY]; clearTimeout(lp);
+      lp = setTimeout(() => { lpFired = true; if (img.naturalWidth) openFull(p, img); }, 550);
+    });
+    cv.addEventListener('pointermove', e => { if (lpAt && Math.hypot(e.clientX - lpAt[0], e.clientY - lpAt[1]) > 8) clearTimeout(lp); });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => cv.addEventListener(t, () => { clearTimeout(lp); lpAt = null; }));
+    cv.addEventListener('contextmenu', e => e.preventDefault());
     cv.addEventListener('click', e => {
+      if (lpFired) { lpFired = false; return; }
       if (!placing) { if (sel) { sel = null; paintPages(); } return; }
       const b = cv.getBoundingClientRect();
       const fx = Math.round((e.clientX - b.left) / b.width * 1000) / 1000, fy = Math.round((e.clientY - b.top) / b.height * 1000) / 1000;
@@ -3772,7 +3862,7 @@ function examDialog(cls, tab, st, col) {
     pageBox.append(h('div', { class: 'scanpg' }, note, h('div', { class: 'scanimg' }, h('div', { class: 'exwrap' }, cv, layer))));
   });
   // Anmerkungen auf dem Blatt ein- und ausblenden (bleiben gespeichert, nur nicht gezeichnet – auch nicht beim Teilen).
-  const HIDE_KINDS = [['pts', 'Punkte je Aufgabe'], ['sum', 'Gesamtpunkte'], ['note', 'Note'], ['m', 'Markierung richtig und falsch'], ['r', 'Rechtschreibung']];
+  const HIDE_KINDS = [['pts', 'Punkte je Aufgabe'], ['sum', 'Gesamtpunkte'], ['note', 'Note'], ['m', 'Markierung richtig und falsch'], ['r', 'Rechtschreibung'], ['ink', 'Mit dem Stift geschrieben']];
   const showBox = h('div', { class: 'exshow' }), showMsg = h('span', { class: 'hint' });
   const drawShow = () => {
     const hd = d.hide || {}, allOff = HIDE_KINDS.every(([id]) => hd[id]);
