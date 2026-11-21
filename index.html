@@ -207,6 +207,15 @@ td.cell input.grade.prop:placeholder-shown { border: 2px solid #c8102e; border-r
 td.cell input.grade.prop::placeholder { color: #c8102e; opacity: 1; font-weight: 700; }
 td.cell.check { background: #fff1b8; }
 .masked td.cell input.grade::placeholder { color: transparent !important; }
+.exkeys { display: grid; gap: 6px; }
+.exkeyrow { display: grid; grid-template-columns: 5.5em 1fr 3.4em 1em 5.5em; align-items: center; gap: 6px; font-size: 14px; }
+.exkeyrow input[type=range] { width: 100%; }
+.exkeyrow input[type=text] { width: 3.4em; text-align: center; }
+.exspiegel .spbars { display: flex; gap: 10px; align-items: flex-end; height: 100px; padding: 4px 0; }
+.spbar { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 2.4em; font-size: 13px; }
+.spcol { display: block; width: 100%; min-height: 2px; background: var(--accent); border-radius: 4px 4px 0 0; }
+.spbar.low .spcol { background: #c8102e; }
+.exgoal select { flex: none; }
 .scanpg { border: 1px solid var(--line); border-radius: 10px; margin: 0 0 14px; overflow: hidden; background: var(--panel); }
 .scanhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 4px 12px; font-size: 13px; color: var(--muted); }
 .scanimg { overflow: auto; max-height: 75vh; }
@@ -3018,11 +3027,64 @@ async function editExam(tab, col, draft) {
   drawSol();
   const keyIns = [0, 1, 2, 3, 4].map(i => h('input', { type: 'text', inputmode: 'decimal', value: String((ex.key || EXAM_KEY)[i]), 'aria-label': 'Note ' + (i + 1) + ' ab Prozent' }));
   const tend = h('input', { type: 'checkbox', class: 'switch', role: 'switch', checked: !!ex.tend });
+  // Notenspiegel: live, mit den übernommenen Punkten (sonst dem Vorschlag) aller Schüler dieser Leistung.
+  const cls = S.classes.find(c => c.tabs.includes(tab));
+  const ptsOf = () => (cls ? cls.students : []).map(st => {
+    const d = examData(tab, st.id, col), k = (getCell(tab, st.id, col.id + ':k') || {}).v;
+    return d.p && Object.keys(d.p).length ? d.p : k ? k.p : null;
+  }).filter(Boolean);
+  const readKey = () => { const key = keyIns.map((k, i) => { const v = numP(k.value); return v == null ? EXAM_KEY[i] : Math.max(0, Math.min(100, v)); }); for (let i = 1; i < 5; i++) if (key[i] > key[i - 1]) key[i] = key[i - 1]; return key; };
+  const spiegelOf = key => {
+    const exk = { tasks: ex.tasks, key, tend: tend.checked };
+    const gs = ptsOf().map(p => examGrade(exk, examSum(exk, { p }))).filter(Boolean);
+    const cnt = [0, 0, 0, 0, 0, 0]; gs.forEach(g => cnt[+g[0] - 1]++);
+    return { n: gs.length, cnt, avg: gs.length ? gs.reduce((s, g) => s + gradeVal(g), 0) / gs.length : null, low: cnt[4] + cnt[5] };
+  };
+  const spiegel = h('div', { class: 'exspiegel' }), ptsHint = keyIns.map(() => h('small', { class: 'hint' }));
+  const sliders = keyIns.map((k, i) => {
+    const s = h('input', { type: 'range', min: '0', max: '100', step: '1', value: String(numP(k.value) ?? EXAM_KEY[i]), 'aria-label': 'Note ' + (i + 1) + ' ab Prozent' });
+    s.addEventListener('input', () => { k.value = s.value; showSpiegel(); });
+    k.addEventListener('input', () => { const v = numP(k.value); if (v != null) s.value = String(v); showSpiegel(); });
+    return s;
+  });
+  const showSpiegel = () => {
+    const key = readKey(), max = examMax(ex), sp = spiegelOf(key);
+    key.forEach((v, i) => { ptsHint[i].textContent = max ? 'ab ' + fmtP(Math.ceil(v * max / 100 * 2) / 2) + ' P.' : ''; });
+    if (!sp.n) { spiegel.replaceChildren(h('p', { class: 'hint' }, 'Noch keine Punkte – der Notenspiegel erscheint, sobald Korrekturen da sind.')); return; }
+    const top = Math.max(...sp.cnt, 1);
+    spiegel.replaceChildren(
+      h('div', { class: 'spbars' }, sp.cnt.map((c, i) => h('div', { class: 'spbar' + (i >= 4 ? ' low' : '') },
+        h('span', { class: 'spn' }, String(c)), h('span', { class: 'spcol', style: 'height:' + Math.round(c / top * 60) + 'px' }), h('b', {}, String(i + 1))))),
+      h('p', {}, h('b', {}, 'Schnitt ' + fmtNum(sp.avg)), ' · ' + sp.n + ' Arbeiten · Note 5 und 6: ' + sp.low + ' (' + Math.round(sp.low / sp.n * 100) + ' %)'));
+  };
+  tend.addEventListener('change', showSpiegel);
+  showSpiegel();
+  // Hilfe: alle Grenzen gleichmäßig absenken, bis das Ziel erreicht ist (kleinste nötige Verschiebung).
+  const goalType = h('select', {}, h('option', { value: 'avg' }, 'Schnitt höchstens'), h('option', { value: 'low' }, 'Fünfen und Sechsen höchstens'));
+  const goalVal = h('input', { type: 'text', inputmode: 'decimal', class: 'exmax', value: '3,5', 'aria-label': 'Zielwert' });
+  const goalMsg = h('span', { class: 'hint' });
+  const suggest = () => {
+    const base = readKey(), want = numP(goalVal.value);
+    if (want == null) { goalMsg.textContent = 'Bitte einen Zielwert eingeben.'; return; }
+    const ok = sp => goalType.value === 'avg' ? sp.avg != null && sp.avg <= want + 1e-9 : sp.low <= want;
+    for (let dlt = 0; dlt <= 50; dlt += 0.5) {
+      const key = base.map(v => Math.max(0, Math.round((v - dlt) * 2) / 2)), sp = spiegelOf(key);
+      if (!sp.n) { goalMsg.textContent = 'Noch keine Punkte vorhanden.'; return; }
+      if (ok(sp)) {
+        key.forEach((v, i) => { keyIns[i].value = fmtP(v); sliders[i].value = String(v); });
+        showSpiegel();
+        goalMsg.textContent = dlt ? 'Alle Grenzen um ' + fmtP(dlt) + ' Prozentpunkte gesenkt. Erst mit „Speichern“ übernommen.' : 'Das Ziel ist mit dem jetzigen Schlüssel schon erreicht.';
+        return;
+      }
+    }
+    goalMsg.textContent = 'Das Ziel lässt sich so nicht erreichen.';
+  };
   const actions = [
     { label: 'Abbrechen', value: null },
     { label: 'Speichern', primary: true, fn: () => 'ok' },
     { label: 'Meine Handschrift', value: 'hand' }
   ];
+  if (col.exam) actions.push({ label: 'Speichern und Noten neu berechnen', value: 'recalc' });
   if (col.exam) actions.push({ label: 'Erwartungshorizont entfernen', cls: 'danger left', value: 'del' });
   const r = await dlg('Erwartungshorizont – ' + col.name, h('div', {},
     h('h3', { class: 'sec' }, 'Musterlösung mit Erwartungen'),
@@ -3034,9 +3096,12 @@ async function editExam(tab, col, draft) {
     h('h3', { class: 'sec low' }, 'Aufgaben'), list,
     h('div', { class: 'exrow' }, h('button', { type: 'button', onclick: () => { ex.tasks.push({ id: uid(), name: 'Aufgabe ' + (ex.tasks.length + 1), max: 4, exp: '' }); draw(); } }, '+ Aufgabe'), total),
     h('h3', { class: 'sec low' }, 'Notenschlüssel (ab wie viel Prozent der Punkte)'),
-    h('div', { class: 'exkey' }, keyIns.map((k, i) => h('label', {}, h('span', {}, 'Note ' + (i + 1)), k, h('span', {}, '%')))),
+    h('div', { class: 'exkeys' }, keyIns.map((k, i) => h('div', { class: 'exkeyrow' }, h('span', {}, 'Note ' + (i + 1) + ' ab'), sliders[i], k, h('span', {}, '%'), ptsHint[i]))),
     h('p', { class: 'hint' }, 'Darunter: Note 6.'),
-    h('label', { class: 'switchrow' }, h('span', {}, 'Mit + und −', h('small', {}, 'Oberes Drittel einer Notenstufe „+“, unteres Drittel „−“')), tend)), actions);
+    h('label', { class: 'switchrow' }, h('span', {}, 'Mit + und −', h('small', {}, 'Oberes Drittel einer Notenstufe „+“, unteres Drittel „−“')), tend),
+    h('h3', { class: 'sec low' }, 'Notenspiegel'), spiegel,
+    h('div', { class: 'exrow exgoal' }, goalType, goalVal, h('button', { type: 'button', onclick: suggest }, 'Schlüssel vorschlagen')), goalMsg,
+    h('p', { class: 'hint' }, 'Die Punkte der Schüler bleiben gleich, nur die Notengrenzen verschieben sich. Eingetragene Noten ändern sich nur mit „Speichern und Noten neu berechnen“.')), actions);
   urls.forEach(u => URL.revokeObjectURL(u));
   if (r === 'hand') { ex.key = keyIns.map((k, i) => numP(k.value) ?? EXAM_KEY[i]); ex.tend = tend.checked; await handDialog(); return editExam(tab, col, ex); }
   const before = ((col.exam && col.exam.sol) || []).map(s => s.name);
@@ -3051,8 +3116,23 @@ async function editExam(tab, col, draft) {
     ex.tasks = ex.tasks.map(t => ({ id: t.id, name: (t.name || '').trim() || 'Aufgabe', max: Math.max(0, +t.max || 0), exp: t.exp || '' }));
     const keep = ex.sol.map(s => s.name);
     scanForget(before.concat(ex._added).filter(n => !keep.includes(n)));
+    const oldExam = col.exam ? examCopy(col.exam) : null;
     col.exam = { text: ex.text || '', tasks: ex.tasks, sol: ex.sol.map(s => s.r ? { name: s.name, t: s.t, r: s.r } : { name: s.name, t: s.t }), key, tend: tend.checked };
     scanSync();
+    // Noten neu berechnen: nur Noten, die noch dem alten Schlüssel entsprechen (selbst geänderte bleiben).
+    if (r === 'recalc' && oldExam && cls) {
+      const before = []; let n = 0;
+      for (const st of cls.students) {
+        const d = examData(tab, st.id, col), cg = getCell(tab, st.id, col.id);
+        if (!cg || !(d.p && Object.keys(d.p).length)) continue;
+        const sum = examSum(col.exam, d), og = examGrade(oldExam, examSum(oldExam, d)), ng = examGrade(col.exam, sum);
+        if (cg.v !== og || ng === cg.v || !ng) continue;
+        before.push({ sid: st.id, g: cg.v }); setCell(tab, st.id, col.id, ng); n++;
+      }
+      col.m = nowIso(); save(); render();
+      undoBar(n + (n === 1 ? ' Note' : ' Noten') + ' nach neuem Schlüssel geändert', () => { before.forEach(b => setCell(tab, b.sid, col.id, b.g)); save(); render(); });
+      return;
+    }
   }
   col.m = nowIso();
   save(); render();
@@ -3186,7 +3266,8 @@ function examStamp(cv, ex, d, pageKey, grade) {
   (d.m || []).forEach((e, i) => {
     if (e.pg !== pageKey) return;
     const x = e.x * cv.width, y = e.y * cv.height, s = size * 0.95;
-    if (e.t === 'f') { handText(ctx, 'f', x, y, s, 70 + i); return; }
+    // f = falsch, ff = Folgefehler; c = richtige Antwort, die daneben geschrieben wird (am Ausgangspunkt eines Folgefehlers)
+    if (e.t === 'f' || e.t === 'ff') { const x2 = handText(ctx, e.t, x, y, s, 70 + i); if (e.c) handText(ctx, e.c, x2 + s * 0.3, y, s, 90 + i); return; }
     if (g['✓'] && g['✓'].length) { handText(ctx, '✓', x, y, s, 70 + i); return; }
     ctx.save(); ctx.strokeStyle = HAND_INK; ctx.lineWidth = s * 0.07; ctx.lineCap = ctx.lineJoin = 'round';   // Ersatz-Haken
     ctx.beginPath(); ctx.moveTo(x, y - s * 0.28); ctx.lineTo(x + s * 0.18, y); ctx.lineTo(x + s * 0.55, y - s * 0.62); ctx.stroke(); ctx.restore();
@@ -3388,7 +3469,7 @@ function examDialog(cls, tab, st, col) {
   // Haken und f: kommen mit dem Vorschlag, lassen sich übernehmen oder wieder entfernen.
   const markBox = h('div', { class: 'exspell' });
   const drawMarks = () => {
-    const km = (k && k.m) || [], cnt = l => { const r = l.filter(e => e.t !== 'f').length; return r + ' ✓ und ' + (l.length - r) + ' f'; };
+    const km = (k && k.m) || [], cnt = l => { const n = t => l.filter(e => e.t === t).length; return n('r') + ' ✓, ' + n('f') + ' f' + (n('ff') ? ', ' + n('ff') + ' ff' : ''); };
     markBox.replaceChildren(...(d.m.length
       ? [h('div', { class: 'exrow' }, h('span', { class: 'grow' }, 'Auf dem Scan: ' + cnt(d.m)),
           h('button', { type: 'button', onclick: () => { d.m = []; store(); drawMarks(); refresh(); } }, 'Entfernen'))]
@@ -3722,8 +3803,8 @@ async function importCorrection(j, progress) {
       const k = { p: {}, w: s.k.w || {}, u: s.k.u || {}, g: String(s.k.g || ''), pos: {}, at: nowIso(), von: 'Claude' };
       for (const t of col.exam.tasks) { const v = (s.k.p || {})[t.id]; if (v != null) k.p[t.id] = Math.max(0, Math.min(t.max, Math.round(+v * 2) / 2)); }
       for (const [id, o] of Object.entries(s.k.pos || {})) { const q = place(o); if (q) k.pos[id] = q; }
-      // Haken / f je Teilantwort: { seite, x, y, t: 'r' (richtig) | 'f' (falsch) }
-      k.m = (s.k.m || []).map(e => { const q = place(e); return q && { pg: q.pg, x: q.x, y: q.y, t: e.t === 'f' ? 'f' : 'r' }; }).filter(Boolean);
+      // Haken / f / ff je Teilantwort: { seite, x, y, t: 'r' (richtig) | 'f' (falsch) | 'ff' (Folgefehler), richtig?: Text daneben }
+      k.m = (s.k.m || []).map(e => { const q = place(e); return q && Object.assign({ pg: q.pg, x: q.x, y: q.y, t: e.t === 'f' || e.t === 'ff' ? e.t : 'r' }, e.richtig ? { c: String(e.richtig) } : {}); }).filter(Boolean);
       // Rechtschreibfehler: { seite, x, y (Anfang des Wortes auf der Grundlinie), w, h, falsch, richtig }
       k.r = (s.k.r || []).map(e => { const q = place(e); return q && { id: uid(), pg: q.pg, x: q.x, y: q.y,
         w: Math.max(0.01, Math.min(0.9, +e.w || 0.12)), h: Math.max(0.005, Math.min(0.1, +e.h || 0.02)), f: String(e.falsch || ''), c: String(e.richtig || '') }; }).filter(Boolean);
