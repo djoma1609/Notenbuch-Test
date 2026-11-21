@@ -3612,7 +3612,7 @@ function examPending(cls, tab, col) {
     const k = (getCell(tab, st.id, col.id + ':k') || {}).v;
     if (!k) return false;
     const d = examData(tab, st.id, col);
-    return !(d.p && Object.keys(d.p).length) || !getCell(tab, st.id, col.id);
+    return !(d.p && Object.keys(d.p).length) || !getCell(tab, st.id, col.id) || ((k.m || []).length && !(d.m || []).length);
   });
 }
 /* Alle offenen Vorschläge übernehmen: Punkte, Stellen, Haken/f, Rechtschreibung, Rückmeldung und die
@@ -3632,6 +3632,8 @@ function examAcceptAll(cls, tab, col) {
       if (!(d.m && d.m.length)) d.m = examCopy(k.m || []);
       if (!(d.g || '').trim() && k.g) d.g = k.g;
       setCell(tab, st.id, col.id + ':p', examCopy(d)); ns++;
+    } else if (!(d.m && d.m.length) && (k.m || []).length) {   // Punkte schon übernommen: nur Haken/f nachtragen
+      d.m = examCopy(k.m); setCell(tab, st.id, col.id + ':p', examCopy(d)); ns++;
     }
     if (!cg) { const g = examGrade(col.exam, examSum(col.exam, d)); if (g) { setCell(tab, st.id, col.id, g); ng++; } }
   }
