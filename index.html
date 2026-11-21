@@ -388,19 +388,19 @@ button.expin.active { outline: 2px solid var(--accent); opacity: 1; }
 .expages canvas { width: 100%; height: auto; display: block; cursor: crosshair; }
 dialog.dlg.examdlg { width: min(1100px, calc(100vw - 16px)); max-height: calc(100vh - 16px); }
 @media (min-width: 680px) {   /* auch iPad hochkant: Bearbeitung links, Arbeit rechts daneben */
-  .exam { display: grid; grid-template-columns: minmax(250px, 300px) 1fr; gap: 14px; align-items: start; }
+  .exam { display: grid; grid-template-columns: minmax(240px, 280px) 1fr; gap: 14px; align-items: start; }
   .exleft, .exright { max-height: calc(100vh - 120px); overflow: auto; }
 }
 dialog.examdlg .dlg-actions { display: none; }   /* Voriger/Nächster stehen links unter der Rückmeldung */
 /* Bildlaufleisten unsichtbar – gescrollt wird trotzdem */
 dialog.dlg, .exleft, .exright { scrollbar-width: none; }
 dialog.dlg::-webkit-scrollbar, .exleft::-webkit-scrollbar, .exright::-webkit-scrollbar { display: none; }
-.exgrade input.grade { width: 56px; flex: none; text-align: center; }
+.exam .exrow.exgrade input.grade { width: 46px; flex: none; text-align: center; padding: 8px 4px; }
 .exgrade .iconbtn { margin-left: 16px; }
 .exbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px; padding: 0 0 8px; background: var(--panel); }
 .exbar .grow { flex: 1; }
 @media (min-width: 1000px) {
-  .exam { grid-template-columns: minmax(300px, 380px) 1fr; gap: 18px; }
+  .exam { grid-template-columns: minmax(280px, 320px) 1fr; gap: 18px; }
 }
 .exleft { overflow-x: hidden; }
 .exshow button, .exspell button { white-space: normal; text-align: left; }
