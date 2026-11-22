@@ -405,6 +405,8 @@ dialog.dlg::-webkit-scrollbar, .exleft::-webkit-scrollbar, .exright::-webkit-scr
 .exfullpg::-webkit-scrollbar { display: none; }
 .exfullwrap { max-width: 1100px; margin: 0 auto; }
 .exzoomno { min-width: 52px; text-align: center; }
+.mknote { white-space: pre-wrap; font-size: 14px; line-height: 1.45; padding: 6px 0; }
+.mkbtns { flex-wrap: wrap; }
 .exnavgap { width: 28px; }
 html, body, * { scrollbar-width: none; }   /* Bildlaufleisten nirgends zeigen – gescrollt wird trotzdem */
 ::-webkit-scrollbar { display: none; }
@@ -2105,6 +2107,7 @@ async function editColumn(tab, col, view) {
   ];
   if (!isNew) actions.unshift({ label: 'Leistung löschen', cls: 'danger left', value: 'del' });
   if (!isNew && col.exam) actions.push({ label: 'Erwartungshorizont bearbeiten', value: 'exam' });
+  if (!isNew) actions.push({ label: 'Überprüfung erstellen', value: 'mk' });
   const r = await dlg(isNew ? 'Neue Leistung' : 'Leistung bearbeiten',
     h('div', {}, field('Bezeichnung', name),
       field('Zählt zu (z. B. ein Referat zu den Klassenarbeiten)', cat),
@@ -2115,9 +2118,11 @@ async function editColumn(tab, col, view) {
       field('Gewichtung innerhalb des Bereichs (z. B. 2 = zählt doppelt)', factor)), actions);
   if (!r) return;
   if (r === 'exam') return editExam(tab, col);
+  if (r === 'mk') return mkDialog(tab, col);
   if (r === 'del') {
     const scans = scanNames(tab, (sid, k) => k.startsWith(col.id + ':d:'));
     if (col.exam && col.exam.sol) col.exam.sol.forEach(s => scans.push(s.name));
+    if (col.mk && col.mk.mat) col.mk.mat.forEach(s => scans.push(s.name));
     if (!await confirmDlg('Leistung löschen', '„' + col.name + '“ mit allen eingetragenen Noten' + (scans.length ? ' und ' + scans.length + ' Scan-Seiten' : '') + ' löschen?')) return;
     tab.columns = tab.columns.filter(c => c !== col);
     markDeleted(col.id);
@@ -4192,6 +4197,180 @@ async function inboxPages(item) {
   const blob = await r.blob();
   return /\.pdf$/i.test(item.name) ? scanPdf(blob) : [await scanShrink(blob)];
 }
+/* ---------- Überprüfung erstellen ----------
+   Die Lehrkraft gibt Material (Scans der bearbeiteten Arbeitsblätter) und Wünsche; Claude am Laptop erstellt
+   daraus die Überprüfung und den Erwartungshorizont als Word-Dateien mit fester Kopfzeile. Die Dateien liegen im
+   App-Ordner unter „Pruefungen\<Leistung>“. Die Lehrkraft lädt sie herunter, überarbeitet sie in Word, lädt die
+   neue Fassung hier wieder hoch; Claude sichtet sie und macht Vorschläge. „Abschließen“ macht die letzte Fassung
+   zum Erwartungshorizont der Leistung (kommt über „Korrekturen holen“). Auftrag je Leistung:
+   Pruefung-Auftraege\<Leistung>.json = { art: "erstellen" | "sichten" | "abschliessen", klasse, fach, leistung,
+     kopf: { fach, klasse, titel, thema }, wunsch, dauer, punkte, stufen, material: [{ datei, drehung }], datei? } */
+const MK_ROOT = 'https://graph.microsoft.com/v1.0/me/drive/special/approot:/' + (IS_TEST ? 'Pruefungen-Test' : 'Pruefungen') + '/';
+const MK_ORDERS = 'https://graph.microsoft.com/v1.0/me/drive/special/approot:/' + (IS_TEST ? 'Pruefung-Auftraege-Test' : 'Pruefung-Auftraege') + '/';
+async function mkFiles(col) {
+  const r = await fetch(MK_ROOT + encodeURIComponent(col.id) + ':/children?$top=200', { headers: { Authorization: 'Bearer ' + await getToken() } });
+  if (r.status === 404) return [];
+  if (!r.ok) throw await httpError(r);
+  return ((await r.json()).value || []).filter(x => x.file).sort((a, b) => (b.lastModifiedDateTime || '').localeCompare(a.lastModifiedDateTime || ''));
+}
+async function mkDialog(tab, col) {
+  const cls = S.classes.find(c => c.tabs.includes(tab));
+  const mk = col.mk = Object.assign({ mat: [], titel: col.name, thema: '', dauer: '', punkte: '', wunsch: '', stufen: null }, col.mk || {});
+  const touch = () => { col.m = nowIso(); save(); };
+  const msg = h('p', { class: 'hint' });
+  // Material: Scans wie bei der Musterlösung (liegen in der OneDrive bei den Scans)
+  const matBox = h('div', { class: 'exsol' }), urls = [];
+  const drawMat = () => {
+    matBox.replaceChildren(...mk.mat.map((s, i) => {
+      const cv = h('canvas', { role: 'img', 'aria-label': 'Material Seite ' + (i + 1) }), img = new Image();
+      img.onload = () => scanDraw(cv, img, s.r || 0);
+      scanBlobUrl(s.name).then(u => { urls.push(u); img.src = u; }).catch(e => { cv.replaceWith(h('p', { class: 'hint' }, e.message)); });
+      const turn = by => { s.r = ((s.r || 0) + by + 360) % 360; touch(); if (img.naturalWidth) scanDraw(cv, img, s.r); };
+      return h('div', { class: 'scanpg' },
+        h('div', { class: 'scanhead' }, h('span', { class: 'grow' }, 'Seite ' + (i + 1) + ' von ' + mk.mat.length),
+          iconBtn('rotl', 'Nach links drehen', () => turn(-90)), iconBtn('rotr', 'Nach rechts drehen', () => turn(90)),
+          iconBtn('trash', 'Seite entfernen', () => { scanForget([s.name]); mk.mat.splice(i, 1); touch(); drawMat(); })),
+        h('div', { class: 'scanimg' }, cv));
+    }));
+  };
+  const pick = camera => {
+    const inp = h('input', { type: 'file', accept: camera ? 'image/*' : 'application/pdf,image/*', hidden: true, multiple: !camera, capture: camera ? 'environment' : null });
+    inp.addEventListener('change', async () => {
+      const files = [...inp.files]; inp.remove();
+      if (!files.length) return;
+      msg.textContent = 'Wird abgelegt …';
+      try {
+        for (const f of files) {
+          const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '');
+          for (const buf of isPdf ? await scanPdf(f) : [await scanShrink(f)]) {
+            const name = 'scan-' + uid() + '.jpg';
+            await scanStore('readwrite', s => s.put(buf, name));
+            mk.mat.push({ name, t: nowIso() });
+          }
+        }
+        msg.textContent = ''; touch(); scanSync();
+      } catch (e) { msg.textContent = 'Konnte nicht abgelegt werden: ' + e.message; }
+      drawMat();
+    });
+    matBox.after(inp); inp.click();
+  };
+  drawMat();
+  const inTitel = h('input', { type: 'text', value: mk.titel, placeholder: 'z. B. 2. HÜ oder Klassenarbeit Nr. 1', oninput: e => { mk.titel = e.target.value; }, onchange: touch });
+  const inThema = h('input', { type: 'text', value: mk.thema, placeholder: 'z. B. Brüche addieren', oninput: e => { mk.thema = e.target.value; }, onchange: touch });
+  const inDauer = h('input', { type: 'text', inputmode: 'numeric', value: mk.dauer, placeholder: 'Minuten', oninput: e => { mk.dauer = e.target.value; }, onchange: touch });
+  const inPunkte = h('input', { type: 'text', inputmode: 'decimal', value: mk.punkte, placeholder: 'z. B. 20', oninput: e => { mk.punkte = e.target.value; }, onchange: touch });
+  const inWunsch = h('textarea', { rows: 4, value: mk.wunsch, placeholder: 'Wünsche: Aufgabenarten, Schwerpunkte, was nicht vorkommen soll …', oninput: e => { mk.wunsch = e.target.value; }, onchange: touch });
+  // Differenzierung: wie im Erwartungshorizont, bis zu 3 Stufen mit bester erreichbarer Note
+  const GR = ['1-', '2+', '2', '2-', '3+', '3', '3-', '4+', '4'];
+  const diffBox = h('div', {});
+  const drawDiff = () => {
+    const L = mk.stufen, n = L ? L.length : 1;
+    diffBox.replaceChildren(
+      h('div', { class: 'exrow' }, h('span', { class: 'grow' }, 'Schwierigkeitsstufen'),
+        h('select', { 'aria-label': 'Stufen', onchange: e => { const k = +e.target.value; mk.stufen = k > 1 ? examCopy(EXAM_LEVEL_DEFAULT[k]).map((l, i, a) => Object.assign(l, { farbe: k === 2 ? ['orange', 'grün'][i] : ['orange', 'gelb', 'grün'][i] })) : null; touch(); drawDiff(); } },
+          [1, 2, 3].map(k => h('option', { value: k, selected: k === n }, k === 1 ? 'nicht differenziert' : k + ' Stufen')))),
+      ...(L ? L.slice(0, -1).map(lv => h('div', { class: 'exrow' }, h('span', { class: 'grow' }, 'nur ' + lv.name + ' („' + (lv.farbe || '') + '“): höchstens Note'),
+        h('select', { onchange: e => { lv.best = e.target.value; touch(); } }, GR.map(g => h('option', { value: g, selected: g === lv.best }, g.replace('-', '−')))))) : []));
+  };
+  drawDiff();
+  // Dateien von Claude und eigene Fassungen in der OneDrive
+  const fileBox = h('div', {}), fileMsg = h('p', { class: 'hint' });
+  let files = [];
+  const isDocx = f => /\.docx$/i.test(f.name);
+  const loadFile = async f => {
+    const r = await fetch(f['@microsoft.graph.downloadUrl']);
+    if (!r.ok) throw new Error('„' + f.name + '“ konnte nicht geladen werden.');
+    return r.blob();
+  };
+  const drawFiles = async () => {
+    if (!auth || !navigator.onLine) { fileMsg.textContent = 'Zum Anzeigen der Dateien bitte mit Internet bei OneDrive anmelden.'; return; }
+    fileMsg.textContent = 'Suche Dateien …';
+    try { files = await mkFiles(col); } catch (e) { fileMsg.textContent = e.message; return; }
+    fileMsg.textContent = files.length ? '' : (mk.sent ? 'Auftrag übergeben ' + fmtTs(mk.sent) + ' – Claude erstellt die Dateien am Laptop. Später hier neu laden.' : 'Noch keine Dateien.');
+    const notes = files.filter(f => /\.txt$/i.test(f.name));
+    const noteBox = h('div', {});
+    if (notes.length) loadFile(notes[0]).then(b => b.text()).then(t => noteBox.replaceChildren(h('details', { open: true }, h('summary', {}, 'Hinweise von Claude (' + fmtTs(notes[0].lastModifiedDateTime) + ')'), h('div', { class: 'mknote' }, t)))).catch(() => {});
+    fileBox.replaceChildren(noteBox, ...files.filter(f => !/\.txt$/i.test(f.name)).map(f => h('div', { class: 'exrow inboxrow' },
+      h('span', { class: 'grow' }, h('b', {}, f.name), h('br'), h('span', { class: 'hint' }, fmtTs(f.lastModifiedDateTime))),
+      iconBtn('export', 'Herunterladen oder teilen', async () => {
+        try {
+          const blob = await loadFile(f), file = new File([blob], f.name, { type: blob.type || 'application/octet-stream' });
+          if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file] }); } catch (e) {} }
+          else download(blob, f.name, file.type);
+        } catch (e) { fileMsg.textContent = e.message; }
+      }))));
+  };
+  // Auftrag an Claude
+  const order = async (art, extra) => {
+    if (!auth || !navigator.onLine) throw new Error('Dafür bitte mit Internet bei OneDrive anmelden.');
+    const names = new Set(mk.mat.map(s => s.name));
+    for (let i = 0; i < 5; i++) {   // Material zuerst in die OneDrive bringen
+      const wait = (await scanStore('readonly', s => s.getAllKeys())).filter(n => names.has(n));
+      if (!wait.length) break;
+      if (i === 4) throw new Error(wait.length + ' Seiten sind noch nicht in der OneDrive. Bitte kurz warten und noch einmal.');
+      await scanSync(); await new Promise(r => setTimeout(r, 2500));
+    }
+    const job = Object.assign({ version: 1, art, at: nowIso(),
+      klasse: cls ? { id: cls.id, name: cls.name } : null, fach: { id: tab.id, name: tab.name }, leistung: { id: col.id, name: col.name },
+      kopf: { fach: tab.name, klasse: cls ? cls.name : '', titel: mk.titel || col.name, thema: mk.thema },
+      wunsch: mk.wunsch, dauer: mk.dauer, punkte: mk.punkte, stufen: mk.stufen || undefined,
+      material: mk.mat.map(s => ({ datei: s.name, drehung: s.r || 0 })),
+      klausur: /arbeit|klausur/i.test(((tab.categories || []).find(c => c.id === col.catId) || {}).name || '') }, extra || {});
+    const r = await fetch(MK_ORDERS + encodeURIComponent(col.id) + '.json:/content', { method: 'PUT',
+      headers: { Authorization: 'Bearer ' + await getToken(), 'Content-Type': 'application/json' }, body: JSON.stringify(job, null, 1) });
+    if (!r.ok) throw await httpError(r);
+    mk.sent = nowIso(); mk.art = art; touch();
+  };
+  const run = async (btn, fn, done) => { btn.disabled = true; msg.textContent = 'Wird übergeben …'; try { await fn(); msg.textContent = done; drawFiles(); } catch (e) { msg.textContent = e.message; } btn.disabled = false; };
+  const bMake = h('button', { type: 'button', class: 'primary' }, 'Entwurf erstellen lassen');
+  bMake.addEventListener('click', () => {
+    if (!mk.mat.length && !mk.wunsch.trim()) { msg.textContent = 'Bitte Material scannen oder Wünsche eintragen.'; return; }
+    run(bMake, () => order('erstellen'), 'Übergeben. Claude erstellt Überprüfung und Erwartungshorizont am Laptop (meist innerhalb einer halben Stunde).');
+  });
+  const bUp = h('button', { type: 'button' }, 'Überarbeitete Fassung hochladen');
+  bUp.addEventListener('click', () => {
+    const inp = h('input', { type: 'file', accept: '.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document', hidden: true });
+    inp.addEventListener('change', () => {
+      const f = inp.files[0]; inp.remove(); if (!f) return;
+      run(bUp, async () => {
+        if (!auth || !navigator.onLine) throw new Error('Dafür bitte mit Internet bei OneDrive anmelden.');
+        const name = 'Überarbeitet ' + new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', '-') + ' – ' + f.name.replace(/[\\/:*?"<>|]/g, '_');
+        const r = await fetch(MK_ROOT + encodeURIComponent(col.id) + '/' + encodeURIComponent(name) + ':/content', { method: 'PUT',
+          headers: { Authorization: 'Bearer ' + await getToken(), 'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }, body: f });
+        if (!r.ok) throw await httpError(r);
+        await order('sichten', { datei: name });
+      }, 'Hochgeladen. Claude sichtet die Fassung und schreibt Vorschläge dazu.');
+    });
+    fileBox.after(inp); inp.click();
+  });
+  const bDone = h('button', { type: 'button' }, 'Abschließen');
+  bDone.addEventListener('click', async () => {
+    const docs = files.filter(isDocx);
+    if (!docs.length) { msg.textContent = 'Es gibt noch keine Word-Datei zum Abschließen.'; return; }
+    const sel = h('select', {}, docs.map((f, i) => h('option', { value: i }, f.name)));
+    const ok = await dlg('Abschließen', h('div', {}, h('p', {}, 'Welche Fassung ist die endgültige? Claude macht daraus den Erwartungshorizont dieser Leistung (Aufgaben, Punkte, Stufen, Musterlösung). Er kommt über „Korrekturen holen“ ins Notenbuch.'), field('Endgültige Fassung', sel)),
+      [{ label: 'Abbrechen', value: null }, { label: 'Abschließen', primary: true, value: 'ok' }]);
+    if (ok !== 'ok') return;
+    run(bDone, () => order('abschliessen', { datei: docs[+sel.value].name }), 'Übergeben. Danach im Fach „Korrekturen holen“ – dort steht der Erwartungshorizont zum Holen bereit.');
+  });
+  drawFiles();
+  await dlg('Überprüfung erstellen – ' + col.name, h('div', { class: 'mkdlg' },
+    h('h3', { class: 'sec' }, 'Material'),
+    h('p', { class: 'hint' }, 'Die bearbeiteten Arbeitsblätter oder Buchseiten scannen, fotografieren oder als PDF ablegen.'),
+    h('div', { class: 'scantools' }, h('button', { type: 'button', class: 'primary', onclick: () => pick(true) }, 'Scannen'), iconBtn('image', 'Datei oder PDF auswählen', () => pick(false))),
+    matBox,
+    h('h3', { class: 'sec low' }, 'Angaben'),
+    field('Titel in der Kopfzeile', inTitel), field('Thema', inThema),
+    h('div', { class: 'exrow' }, field('Dauer', inDauer), field('Gesamtpunkte', inPunkte)),
+    diffBox, field('Wünsche', inWunsch),
+    h('div', { class: 'exrow' }, bMake), msg,
+    h('h3', { class: 'sec low' }, 'Fassungen'), fileMsg, fileBox,
+    h('div', { class: 'exrow mkbtns' }, iconBtn('sync', 'Neu laden', () => drawFiles()), bUp, bDone)),
+    [{ label: 'Schließen', value: null }]);
+  urls.forEach(u => URL.revokeObjectURL(u));
+  touch(); render();
+}
+
 /* Korrektur anstoßen: Das Notenbuch legt je Leistung einen Auftrag in den App-Ordner
    („Korrektur-Auftraege“). Claude am Laptop findet ihn, sortiert die Seiten in OneDrive\Klausuren,
    korrigiert und legt die Vorschläge in den Eingang. Seiten, die noch auf diesem Gerät warten,
@@ -4276,7 +4455,7 @@ async function fetchCorrections(cls, tab) {
         try { st.textContent = await importCorrection(j, t => { st.textContent = t; }); btn.textContent = '✓'; drawAccept(); }
         catch (e) { st.textContent = 'Fehler: ' + e.message; btn.disabled = false; }
       });
-      return h('div', { class: 'exrow inboxrow' }, h('span', { class: 'grow' }, h('b', {}, what), h('br'), (j.job.schueler || []).length + ' Arbeiten', h('br'), st), btn);
+      return h('div', { class: 'exrow inboxrow' }, h('span', { class: 'grow' }, h('b', {}, what), h('br'), j.job.abschluss ? 'Erwartungshorizont aus „Überprüfung erstellen“' : (j.job.schueler || []).length + ' Arbeiten', h('br'), st), btn);
     }));
   } catch (e) { msg.textContent = 'Fehler: ' + e.message; }
   return p;
@@ -4294,8 +4473,13 @@ async function importCorrection(j, progress) {
   if (job.exam && (!col.exam || !col.exam.tasks.length || (job.exam.ersetzen && noPts())))
     col.exam = Object.assign({ sol: [], key: EXAM_KEY.slice(), tend: false }, col.exam || {}, { text: (col.exam && col.exam.text) || job.exam.text || '', tasks: job.exam.tasks.map(t => Object.assign({ id: String(t.id), name: String(t.name), max: +t.max || 0, exp: String(t.exp || '') }, Array.isArray(t.lmax) ? { lmax: t.lmax.map(v => +v || 0) } : {})) });
   if (!col.exam) throw new Error('Für diese Leistung gibt es keinen Erwartungshorizont.');
+  // Stufen einer differenzierten Arbeit (z. B. aus „Überprüfung erstellen“ → Abschließen)
+  if (job.exam && Array.isArray(job.exam.stufen) && job.exam.stufen.length > 1 && (job.exam.ersetzen || !col.exam.diff))
+    col.exam.diff = { levels: job.exam.stufen.map(l => ({ name: String(l.name || 'Stufe'), best: String(l.best || '1') })) };
   col.m = nowIso(); save();
   const used = [], missing = [];
+  // Abschluss einer selbst erstellten Überprüfung: die neue Musterlösung ersetzt die alte, solange noch niemand Punkte hat
+  if (job.musterloesung && job.abschluss && (col.exam.sol || []).length && noPts()) { scanForget(col.exam.sol.map(s => s.name)); col.exam.sol = []; }
   if (job.musterloesung && !(col.exam.sol || []).length) {
     col.exam.sol = [];
     for (const f of job.musterloesung) {
