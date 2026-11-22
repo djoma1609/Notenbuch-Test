@@ -2995,26 +2995,108 @@ function examGrade(ex, sum) {
   return g + (r >= 2 / 3 && g > 1 ? '+' : r < 1 / 3 && g < 6 ? '-' : '');
 }
 
+/* Differenzierte Arbeiten: bis zu 3 Stufen (z. B. leicht, mittel, schwer), je Aufgabe wählt der Schüler eine.
+   ex.diff.levels = [{ name, best }] von leicht nach schwer; best = beste Note, die man nur mit dieser Stufe erreichen kann.
+   Die oberste Stufe hat die vollen Höchstpunkte (t.max), darunter t.lmax[i]. Die Note bezieht sich immer auf die volle Punktzahl.
+   Je Schüler steht die gewählte Stufe in d.lv = { aufgabenId: Stufennummer } (fehlt = oberste). */
+const examLevels = ex => (ex && ex.diff && ex.diff.levels && ex.diff.levels.length > 1) ? ex.diff.levels : null;
+const examTaskMax = (ex, t, lv) => {
+  const L = examLevels(ex);
+  if (!L || lv == null || lv >= L.length - 1) return +t.max || 0;
+  const v = (t.lmax || [])[lv];
+  return v == null ? +t.max || 0 : +v;
+};
+// Prozent, ab dem eine Note wie „2-“, „2“ oder „2+“ beginnt (nach Schlüssel und Tendenz der Arbeit).
+function examGradeStart(ex, g) {
+  const key = ex.key || EXAM_KEY, n = parseInt(g, 10);
+  if (!(n >= 1 && n <= 5)) return 0;
+  const lo = key[n - 1], hi = n === 1 ? 100 : key[n - 2];
+  if (/\+/.test(g)) return lo + (hi - lo) * 2 / 3;
+  if (/-/.test(g)) return lo;
+  return ex.tend ? lo + (hi - lo) / 3 : lo;
+}
+const EXAM_LEVEL_DEFAULT = { 2: [{ name: 'leicht', best: '2-' }, { name: 'schwer', best: '1' }],
+  3: [{ name: 'leicht', best: '3' }, { name: 'mittel', best: '2' }, { name: 'schwer', best: '1' }] };
+
 const examSolNames = tab => tab.columns.flatMap(c => ((c.exam && c.exam.sol) || []).map(s => s.name));
 async function editExam(tab, col, draft) {
   const ex = draft || examCopy(col.exam || { text: '', tasks: [], key: EXAM_KEY.slice(), tend: false });
   ex.sol = ex.sol || []; ex._added = ex._added || [];
+  // Neue Arbeit: zuerst fragen, ob sie differenziert ist (bis zu 3 Stufen).
+  if (!col.exam && !draft && !ex.diff) {
+    const n = await dlg('Differenzierte Arbeit?', h('p', {}, 'Gibt es die Aufgaben in mehreren Schwierigkeitsstufen, von denen die Schüler je Aufgabe eine wählen (z. B. leicht „orange“ und schwer „grün“)?'),
+      [{ label: 'Nein', value: 1 }, { label: '2 Stufen', value: 2 }, { label: '3 Stufen', value: 3 }, { label: 'Abbrechen', value: null }]);
+    if (n == null) return;
+    if (n > 1) ex.diff = { levels: examCopy(EXAM_LEVEL_DEFAULT[n]) };
+  }
   if (!ex.tasks.length) ex.tasks.push({ id: uid(), name: 'Aufgabe 1', max: 4, exp: '' });
   const list = h('div', {}), total = h('p', { class: 'hint' });
-  const sumUp = () => { total.textContent = 'Zusammen ' + fmtP(examMax(ex)) + ' Punkte'; };
+  // Höchstpunkte der unteren Stufen: aus der besten erreichbaren Note der Stufe vorgeschlagen, solange nicht selbst geändert.
+  const autoL = () => {
+    const L = examLevels(ex); if (!L) return;
+    const kx = { key: readKeyNow(), tend: tendNow() };
+    for (const t of ex.tasks) {
+      t.lmax = (t.lmax || []).slice(0, L.length - 1); t.lauto = t.lauto || [];
+      for (let i = 0; i < L.length - 1; i++)
+        if (t.lmax[i] == null || t.lauto[i] !== false) { t.lmax[i] = Math.min(+t.max || 0, Math.ceil((+t.max || 0) * examGradeStart(kx, L[i].best) / 100 * 4) / 4); t.lauto[i] = true; }
+    }
+  };
+  const sumUp = () => {
+    const L = examLevels(ex), full = examMax(ex);
+    if (!L) { total.textContent = 'Zusammen ' + fmtP(full) + ' Punkte'; return; }
+    const kx = { tasks: ex.tasks, key: readKeyNow(), tend: tendNow() };
+    total.textContent = 'Zusammen ' + fmtP(full) + ' Punkte · ' + L.slice(0, -1).map((lv, i) => {
+      const s = ex.tasks.reduce((a, t) => a + examTaskMax(ex, t, i), 0);
+      return 'nur ' + lv.name + ': ' + fmtP(s) + ' P. = höchstens Note ' + (examGrade(kx, s) || '–');
+    }).join(' · ');
+  };
   const draw = () => {
+    const L = examLevels(ex);
     list.replaceChildren(...ex.tasks.map((t, i) => h('div', { class: 'extask' },
       h('div', { class: 'exrow' },
         h('input', { type: 'text', value: t.name, 'aria-label': 'Aufgabe', oninput: e => { t.name = e.target.value; } }),
-        h('input', { type: 'text', inputmode: 'decimal', class: 'exmax', value: fmtP(t.max), 'aria-label': 'Höchstpunkte',
-          oninput: e => { t.max = numP(e.target.value) || 0; sumUp(); } }),
-        h('span', { class: 'hint' }, 'P.'),
+        h('input', { type: 'text', inputmode: 'decimal', class: 'exmax', value: fmtP(t.max), 'aria-label': 'Höchstpunkte' + (L ? ' ' + L[L.length - 1].name : ''),
+          oninput: e => { t.max = numP(e.target.value) || 0; if (L) { autoL(); drawLv(); } sumUp(); } }),
+        h('span', { class: 'hint' }, L ? 'P. ' + L[L.length - 1].name : 'P.'),
         iconBtn('trash', 'Aufgabe entfernen', () => { ex.tasks.splice(i, 1); draw(); })),
+      L ? h('div', { class: 'exrow exlvrow', 'data-t': t.id }) : null,
       h('textarea', { rows: 3, value: t.exp || '', placeholder: 'Erwartete Lösung. Bei Rechenaufgaben die Schritte mit Punkten, z. B.: Ansatz 1 P., Umformen 1 P., Ergebnis x = 4 1 P.',
         oninput: e => { t.exp = e.target.value; } }))));
-    sumUp();
+    drawLv(); sumUp();
   };
-  draw();
+  // Schlüssel und Tendenz stehen weiter unten im Fenster; solange sie noch nicht angelegt sind, gilt der gespeicherte Stand.
+  const readKeyNow = () => { try { return readKey(); } catch (e) { return ex.key || EXAM_KEY; } };
+  const tendNow = () => { try { return tend.checked; } catch (e) { return !!ex.tend; } };
+  // Felder für die Höchstpunkte der unteren Stufen je Aufgabe.
+  const drawLv = () => {
+    const L = examLevels(ex); if (!L) return;
+    list.querySelectorAll('.exlvrow').forEach(row => {
+      const t = ex.tasks.find(x => x.id === row.dataset.t); if (!t) return;
+      row.replaceChildren(...L.slice(0, -1).flatMap((lv, i) => [h('span', { class: 'hint' }, lv.name),
+        h('input', { type: 'text', inputmode: 'decimal', class: 'exmax', value: fmtP(examTaskMax(ex, t, i)), 'aria-label': 'Höchstpunkte ' + lv.name,
+          onchange: e => { const v = numP(e.target.value); t.lmax = t.lmax || []; t.lauto = t.lauto || []; t.lmax[i] = Math.max(0, Math.min(+t.max || 0, v || 0)); t.lauto[i] = false; e.target.value = fmtP(t.lmax[i]); sumUp(); } })]));
+    });
+  };
+  // Abschnitt „Differenzierung“: Zahl der Stufen, Namen und beste erreichbare Note je Stufe.
+  const diffBox = h('div', { class: 'exdiff' });
+  const GRADES = ['1', '1-', '2+', '2', '2-', '3+', '3', '3-', '4+', '4', '4-', '5+', '5', '5-'];
+  const drawDiff = () => {
+    const L = examLevels(ex), n = L ? L.length : 1;
+    const sel = h('select', { 'aria-label': 'Stufen', onchange: e => {
+      const k = +e.target.value;
+      if (k > 1) ex.diff = { levels: examCopy(EXAM_LEVEL_DEFAULT[k]) }; else delete ex.diff;
+      ex.tasks.forEach(t => { delete t.lmax; delete t.lauto; });
+      autoL(); drawDiff(); draw();
+    } }, [1, 2, 3].map(k => h('option', { value: k, selected: k === n }, k === 1 ? 'nicht differenziert' : k + ' Stufen')));
+    diffBox.replaceChildren(h('div', { class: 'exrow' }, h('span', { class: 'grow' }, 'Schwierigkeitsstufen'), sel),
+      ...(L ? L.map((lv, i) => h('div', { class: 'exrow' },
+        h('input', { type: 'text', value: lv.name, 'aria-label': 'Name der Stufe', oninput: e => { lv.name = e.target.value; }, onchange: () => draw() }),
+        h('span', { class: 'hint' }, 'nur diese Stufe: höchstens Note'),
+        i === L.length - 1 ? h('b', {}, '1') : h('select', { 'aria-label': 'Beste Note ' + lv.name, onchange: e => { lv.best = e.target.value; autoL(); draw(); } },
+          GRADES.map(g => h('option', { value: g, selected: g === lv.best }, g.replace('-', '−')))))) : []),
+      L ? h('p', { class: 'hint' }, 'Die Höchstpunkte der leichteren Stufen werden aus der Note vorgeschlagen und lassen sich je Aufgabe ändern. Die Note bezieht sich immer auf die volle Punktzahl der schwersten Stufe.') : null);
+  };
+  autoL(); drawDiff(); draw();
   const textTa = h('textarea', { rows: 4, value: ex.text || '', oninput: e => { ex.text = e.target.value; } });
   // Musterlösung mit Erwartungen: Seiten liegen wie die Scans in der OneDrive, die KI liest sie bei jeder Prüfung mit.
   const solBox = h('div', { class: 'exsol' }), solMsg = h('span', { class: 'hint' }), urls = [];
@@ -3104,6 +3186,7 @@ async function editExam(tab, col, draft) {
   });
   const showSpiegel = () => {
     const key = readKey(), max = examMax(ex), sp = spiegelOf(key);
+    if (examLevels(ex)) { autoL(); drawLv(); sumUp(); }   // leichtere Stufen folgen dem Schlüssel
     key.forEach((v, i) => { ptsHint[i].textContent = max ? 'ab ' + fmtP(Math.ceil(v * max / 100 * 2) / 2) + ' P.' : ''; });
     if (!sp.n) { spiegel.replaceChildren(h('p', { class: 'hint' }, 'Noch keine Punkte – der Notenspiegel erscheint, sobald Korrekturen da sind.')); return; }
     const top = Math.max(...sp.cnt, 1);
@@ -3204,6 +3287,7 @@ async function editExam(tab, col, draft) {
       iconBtn('image', 'Datei oder PDF auswählen', () => pick(false)), readBtn, solMsg),
     solBox,
     field('Die ganze Arbeit: Aufgabenstellung und Hinweise (wird der KI mitgegeben)', textTa),
+    h('h3', { class: 'sec low' }, 'Differenzierung'), diffBox,
     h('h3', { class: 'sec low' }, 'Aufgaben'), list,
     h('div', { class: 'exrow' }, h('button', { type: 'button', onclick: () => { ex.tasks.push({ id: uid(), name: 'Aufgabe ' + (ex.tasks.length + 1), max: 4, exp: '' }); draw(); } }, '+ Aufgabe'), total),
     h('h3', { class: 'sec low' }, 'Notenschlüssel (ab wie viel Prozent der Punkte)'),
@@ -3226,7 +3310,16 @@ async function editExam(tab, col, draft) {
   } else {
     const key = keyIns.map((k, i) => { const v = numP(k.value); return v == null ? EXAM_KEY[i] : Math.max(0, Math.min(100, v)); });
     for (let i = 1; i < 5; i++) if (key[i] > key[i - 1]) key[i] = key[i - 1];
-    ex.tasks = ex.tasks.map(t => ({ id: t.id, name: (t.name || '').trim() || 'Aufgabe', max: Math.max(0, +t.max || 0), exp: t.exp || '' }));
+    const Lsave = examLevels(ex);
+    ex.tasks = ex.tasks.map(t => {
+      const o = { id: t.id, name: (t.name || '').trim() || 'Aufgabe', max: Math.max(0, +t.max || 0), exp: t.exp || '' };
+      if (Lsave) {   // Höchstpunkte der leichteren Stufen (beim Neugewichten anteilig mit verschoben)
+        const rw = ex._rew && ex._rew[t.id], f = rw && rw[0] ? rw[1] / rw[0] : 1;
+        o.lmax = Lsave.slice(0, -1).map((_, i) => Math.min(o.max, Math.round(examTaskMax(ex, t, i) * f * 4) / 4));
+        o.lauto = Lsave.slice(0, -1).map((_, i) => (t.lauto || [])[i] !== false);
+      }
+      return o;
+    });
     const keep = ex.sol.map(s => s.name);
     scanForget(before.concat(ex._added).filter(n => !keep.includes(n)));
     const oldExam = col.exam ? examCopy(col.exam) : null;
@@ -3239,6 +3332,7 @@ async function editExam(tab, col, draft) {
       if (c && c.v && c.v.p) { const v = examCopy(c.v); v.p = scaleBy(v.p, rew); setCell(tab, st.id, col.id + suf, v); }
     }
     col.exam ={ text: ex.text || '', tasks: ex.tasks, sol: ex.sol.map(s => s.r ? { name: s.name, t: s.t, r: s.r } : { name: s.name, t: s.t }), key, tend: tend.checked };
+    if (Lsave) col.exam.diff = { levels: Lsave.map(l => ({ name: (l.name || '').trim() || 'Stufe', best: l.best || '1' })) };
     scanSync();
     // Noten neu berechnen: nur Noten, die noch dem alten Schlüssel entsprechen (selbst geänderte bleiben).
     if (r === 'recalc' && oldExam && cls) {
@@ -3584,12 +3678,15 @@ function examDialog(cls, tab, st, col) {
   };
   const paintPages = () => canvases.forEach(c => c.paint());
   const refresh = () => { paintHead(); paintPages(); };
+  const LV = examLevels(ex);
+  const lvOf = tid => { const v = (d.lv || {})[tid]; return LV ? (v == null ? LV.length - 1 : v) : null; };
+  const maxOf = t => examTaskMax(ex, t, lvOf(t.id));
   const drawTasks = () => {
     taskBox.replaceChildren(...ex.tasks.map((t, i) => {
       const inp = h('input', { type: 'text', inputmode: 'decimal', class: 'expts', value: d.p[t.id] != null ? fmtP(d.p[t.id]) : '', 'aria-label': 'Punkte ' + t.name });
       inp.addEventListener('change', () => {
         const v = inp.value.trim() === '' ? null : numP(inp.value);
-        if (v != null && (v < 0 || v > t.max)) { inp.classList.add('bad'); inp.title = 'Zwischen 0 und ' + fmtP(t.max); return; }
+        if (v != null && (v < 0 || v > maxOf(t))) { inp.classList.add('bad'); inp.title = 'Zwischen 0 und ' + fmtP(maxOf(t)); return; }
         inp.classList.remove('bad');
         if (v == null) delete d.p[t.id]; else d.p[t.id] = v;
         inp.value = v == null ? '' : fmtP(v);
@@ -3606,7 +3703,14 @@ function examDialog(cls, tab, st, col) {
         h('span', {}, 'Vorschlag: ' + fmtP(kp) + ' P.' + (k.u[t.id] ? ' (unsicher)' : '') + ' – ' + (k.w[t.id] || '')),
         d.p[t.id] === kp ? h('span', { class: 'hint' }, '✓') : h('button', { type: 'button', onclick: () => { take(t.id); } }, 'übernehmen'));
       return h('div', { class: 'extask' },
-        h('div', { class: 'exrow' }, h('span', { class: 'grow' }, h('b', {}, t.name)), inp, h('span', { class: 'hint' }, '/ ' + fmtP(t.max))),
+        h('div', { class: 'exrow' }, h('span', { class: 'grow' }, h('b', {}, t.name)), inp, h('span', { class: 'hint' }, '/ ' + fmtP(maxOf(t)))),
+        // Differenzierte Arbeit: gewählte Stufe dieser Aufgabe (bestimmt die Höchstpunkte)
+        LV ? h('div', { class: 'exchips exlv' }, LV.map((lv, li) => h('label', { class: 'exchip' + (lvOf(t.id) === li ? ' on' : '') },
+          h('input', { type: 'radio', name: 'lv-' + t.id, checked: lvOf(t.id) === li, onchange: () => {
+            d.lv = d.lv || {}; d.lv[t.id] = li;
+            const mx = examTaskMax(ex, t, li); if (d.p[t.id] != null && d.p[t.id] > mx) d.p[t.id] = mx;
+            store(); drawTasks(); refresh();
+          } }), lv.name + ' (' + fmtP(examTaskMax(ex, t, li)) + ')'))) : null,
         t.exp ? h('details', { class: 'exexp' }, h('summary', {}, 'Erwartung'), h('div', {}, t.exp)) : null, kiRow);
     }));
     placeHint.textContent = !placing ? '' : /^m:/.test(placing) ? 'Jetzt im Scan an die Stelle tippen, an die das Zeichen soll (auf Höhe der Zeile).' : /^r/.test(placing) ? 'Jetzt im Scan genau unter den Anfang des falschen Wortes tippen (auf die Linie, auf der das Wort steht).'
@@ -3656,12 +3760,13 @@ function examDialog(cls, tab, st, col) {
   };
   const take = tid => {
     d.p[tid] = k.p[tid];
+    if (k.lv && k.lv[tid] != null) { d.lv = d.lv || {}; d.lv[tid] = k.lv[tid]; }   // vorgeschlagene Stufe mit übernehmen
     if (k.pos[tid] && !d.pos[tid]) d.pos[tid] = k.pos[tid];
     if (k.pos.sum && !d.pos.sum) d.pos.sum = k.pos.sum;
     store(); drawTasks(); refresh();
   };
   const takeAll = () => {
-    ex.tasks.forEach(t => { if (k.p[t.id] != null) { d.p[t.id] = k.p[t.id]; if (k.pos[t.id]) d.pos[t.id] = k.pos[t.id]; } });
+    ex.tasks.forEach(t => { if (k.p[t.id] != null) { d.p[t.id] = k.p[t.id]; if (k.lv && k.lv[t.id] != null) { d.lv = d.lv || {}; d.lv[t.id] = k.lv[t.id]; } if (k.pos[t.id]) d.pos[t.id] = k.pos[t.id]; } });
     if (k.pos.sum) d.pos.sum = k.pos.sum;
     if (k.g && !(d.g || '').trim()) { d.g = k.g; fb.value = k.g; }
     (k.r || []).forEach(e => { if (!d.r.some(x => x.id === e.id) && !d.rx.includes(e.id)) d.r.push(examCopy(e)); });
@@ -3712,7 +3817,7 @@ function examDialog(cls, tab, st, col) {
       del: () => { d.m = d.m.filter(x => x !== e); } }); });
     if (!hd.pts) ex.tasks.forEach(t => { const ps = d.pos[t.id]; if (ps && ps.pg === pk && d.p[t.id] != null) out.push({ ref: 'pos:' + t.id, x: ps.x, y: ps.y - sf * 0.45, w: hw * 2.4, h: sf * 1.2,
       move: (dx, dy) => { ps.x += dx; ps.y += dy; },
-      edit: async () => { const v = await askText('Punkte – ' + t.name, 'Punkte (höchstens ' + fmtP(t.max) + ')', fmtP(d.p[t.id]), 'Übernehmen'); const n = v == null ? null : numP(v); if (n != null && n >= 0 && n <= t.max) d.p[t.id] = n; },
+      edit: async () => { const v = await askText('Punkte – ' + t.name, 'Punkte (höchstens ' + fmtP(maxOf(t)) + ')', fmtP(d.p[t.id]), 'Übernehmen'); const n = v == null ? null : numP(v); if (n != null && n >= 0 && n <= maxOf(t)) d.p[t.id] = n; },
       del: () => { delete d.pos[t.id]; } }); });
     const sp = d.pos.sum;
     if (sp && sp.pg === pk && (!hd.sum || !hd.note) && examSum(ex, d) != null) out.push({ ref: 'pos:sum', x: sp.x, y: sp.y - sf, w: hw * 4.2, h: sf * 2.8,
@@ -4044,6 +4149,7 @@ function examAcceptAll(cls, tab, col) {
     const d = examData(tab, st.id, col);
     if (!(d.p && Object.keys(d.p).length)) {
       d.p = examCopy(k.p || {});
+      if (k.lv) d.lv = Object.assign({}, k.lv, d.lv || {});
       d.pos = Object.assign({}, k.pos || {}, d.pos || {});
       d.r = d.r || []; d.rx = d.rx || [];
       (k.r || []).forEach(e => { if (!d.r.some(x => x.id === e.id) && !d.rx.includes(e.id)) d.r.push(examCopy(e)); });
@@ -4105,7 +4211,7 @@ async function orderCorrection(cls, tab, col) {
   const order = {
     version: 1, at: nowIso(),
     klasse: { id: cls.id, name: cls.name }, fach: { id: tab.id, name: tab.name }, leistung: { id: col.id, name: col.name },
-    exam: { text: ex.text || '', tasks: ex.tasks || [], musterloesung: (ex.sol || []).map(s => ({ datei: s.name, drehung: s.r || 0 })) },
+    exam: { text: ex.text || '', tasks: ex.tasks || [], stufen: examLevels(ex) || undefined, musterloesung: (ex.sol || []).map(s => ({ datei: s.name, drehung: s.r || 0 })) },
     schueler: studs.map(x => ({ id: x.s.id, name: x.s.name, kuerzel: x.kz,
       seiten: x.pages.map(p => ({ datei: p.name, drehung: +((getCell(tab, x.s.id, p.key.replace(':d:', ':r:')) || {}).v || 0) })) }))
   };
@@ -4186,7 +4292,7 @@ async function importCorrection(j, progress) {
   col.scan = true;
   const noPts = () => !cls.students.some(s => getCell(tab, s.id, col.id + ':p'));   // Aufgaben nur ersetzen, solange niemand Punkte hat
   if (job.exam && (!col.exam || !col.exam.tasks.length || (job.exam.ersetzen && noPts())))
-    col.exam = Object.assign({ sol: [], key: EXAM_KEY.slice(), tend: false }, col.exam || {}, { text: (col.exam && col.exam.text) || job.exam.text || '', tasks: job.exam.tasks.map(t => ({ id: String(t.id), name: String(t.name), max: +t.max || 0, exp: String(t.exp || '') })) });
+    col.exam = Object.assign({ sol: [], key: EXAM_KEY.slice(), tend: false }, col.exam || {}, { text: (col.exam && col.exam.text) || job.exam.text || '', tasks: job.exam.tasks.map(t => Object.assign({ id: String(t.id), name: String(t.name), max: +t.max || 0, exp: String(t.exp || '') }, Array.isArray(t.lmax) ? { lmax: t.lmax.map(v => +v || 0) } : {})) });
   if (!col.exam) throw new Error('Für diese Leistung gibt es keinen Erwartungshorizont.');
   col.m = nowIso(); save();
   const used = [], missing = [];
@@ -4221,7 +4327,12 @@ async function importCorrection(j, progress) {
       const all = scanPages(tab, st.id, col.id).map(p => p.key);
       const place = o => { const i = (+o.seite || 1) - 1, k = keys[i] || all[i]; return k ? { pg: k, x: Math.max(0.02, Math.min(0.95, +o.x || 0.85)), y: Math.max(0.02, Math.min(0.95, +o.y || 0.1)) } : null; };
       const k = { p: {}, w: s.k.w || {}, u: s.k.u || {}, g: String(s.k.g || ''), pos: {}, at: nowIso(), von: 'Claude' };
-      for (const t of col.exam.tasks) { const v = (s.k.p || {})[t.id]; if (v != null) k.p[t.id] = Math.max(0, Math.min(t.max, Math.round(+v * 4) / 4)); }
+      // Differenzierte Arbeit: gewählte Stufe je Aufgabe (Nummer ab 0 = leichteste, oder Name der Stufe)
+      const LVs = examLevels(col.exam), lvIn = s.k.stufe || s.k.lv || {};
+      if (LVs) { k.lv = {}; for (const t of col.exam.tasks) { const raw = lvIn[t.id]; if (raw == null) continue;
+        const li = typeof raw === 'number' ? raw : LVs.findIndex(l => l.name.toLowerCase() === String(raw).toLowerCase());
+        if (li >= 0 && li < LVs.length) k.lv[t.id] = li; } }
+      for (const t of col.exam.tasks) { const v = (s.k.p || {})[t.id]; if (v != null) k.p[t.id] = Math.max(0, Math.min(examTaskMax(col.exam, t, k.lv ? k.lv[t.id] : null), Math.round(+v * 4) / 4)); }
       for (const [id, o] of Object.entries(s.k.pos || {})) { const q = place(o); if (q) k.pos[id] = q; }
       // Haken / f / ff je Teilantwort: { seite, x, y, t: 'r' (richtig) | 'f' (falsch) | 'ff' (Folgefehler), richtig?: Text daneben }
       k.m = (s.k.m || []).map(e => { const q = place(e); return q && Object.assign({ pg: q.pg, x: q.x, y: q.y, t: ['f', 'ff', 'q'].includes(e.t) ? e.t : 'r' }, e.richtig ? { c: String(e.richtig) } : {}); }).filter(Boolean);
