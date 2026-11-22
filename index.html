@@ -404,6 +404,8 @@ dialog.dlg::-webkit-scrollbar, .exleft::-webkit-scrollbar, .exright::-webkit-scr
 .exfullpg { flex: 1; overflow: auto; padding: 12px; scrollbar-width: none; }
 .exfullpg::-webkit-scrollbar { display: none; }
 .exfullwrap { max-width: 1100px; margin: 0 auto; }
+.exzoomno { min-width: 52px; text-align: center; }
+.exnavgap { width: 28px; }
 html, body, * { scrollbar-width: none; }   /* Bildlaufleisten nirgends zeigen – gescrollt wird trotzdem */
 ::-webkit-scrollbar { display: none; }
 .exfullcv { display: block; width: 100%; height: auto; background: #fff; touch-action: none; cursor: crosshair; }
@@ -3798,16 +3800,33 @@ function examDialog(cls, tab, st, col) {
       drawHits = hitLayer(fc, flayer, pk(), paintOnly);
       pgNo.textContent = 'Blatt ' + (idx + 1) + ' von ' + pages.length;
       prevB.disabled = idx === 0; nextB.disabled = idx === pages.length - 1;
-      scroller.scrollTop = 0; fc.paint();
+      scroller.scrollTop = 0; scroller.scrollLeft = 0; fc.paint();
     };
     prevB.onclick = () => show(idx - 1); nextB.onclick = () => show(idx + 1);
     const close = () => { box.remove(); (content.closest('dialog') || document.body).classList.remove('exfullopen'); const k = canvases.indexOf(fc); if (k >= 0) canvases.splice(k, 1); sel = null; paintPages(); drawUndo(); };
-    const scroller = h('div', { class: 'exfullpg' }, h('div', { class: 'exwrap exfullwrap' }, fc, flayer));
+    const fwrap = h('div', { class: 'exwrap exfullwrap' }, fc, flayer);
+    const scroller = h('div', { class: 'exfullpg' }, fwrap);
+    // Vergrößern: zwei Finger auseinanderziehen, + / − tippen oder am Laptop Strg + Mausrad bzw. Touchpad-Zoom.
+    let z = 1;
+    const zoomNo = h('span', { class: 'hint exzoomno' }, '100 %');
+    const setZ = (nz, cx, cy) => {
+      nz = Math.max(1, Math.min(4, Math.round(nz * 100) / 100));
+      const r = scroller.getBoundingClientRect();
+      if (cx == null) { cx = r.left + r.width / 2; cy = r.top + r.height / 2; }
+      const fx = (scroller.scrollLeft + cx - r.left) / fwrap.offsetWidth, fy = (scroller.scrollTop + cy - r.top) / fwrap.offsetHeight;
+      z = nz; fwrap.style.width = (z * 100) + '%'; fwrap.style.maxWidth = (1100 * z) + 'px';
+      scroller.scrollLeft = fx * fwrap.offsetWidth - (cx - r.left); scroller.scrollTop = fy * fwrap.offsetHeight - (cy - r.top);
+      zoomNo.textContent = Math.round(z * 100) + ' %';
+    };
+    const zOut = h('button', { type: 'button', class: 'expin on', title: 'Verkleinern', onclick: () => setZ(z / 1.25) }, '−');
+    const zIn = h('button', { type: 'button', class: 'expin on', title: 'Vergrößern', onclick: () => setZ(z * 1.25) }, '+');
+    scroller.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); setZ(z * Math.exp(-e.deltaY / 300), e.clientX, e.clientY); }, { passive: false });
     const box = h('div', { class: 'exfull' },
       h('div', { class: 'exfullbar' }, h('div', { class: 'exfl' }, iconBtn('close', 'Vollbild schließen', close), penB, eraB),
         h('div', { class: 'exfc' }, fu, fr), h('div', {})),
       scroller,
-      pages.length > 1 ? h('div', { class: 'exfullnav' }, prevB, pgNo, nextB) : null);
+      h('div', { class: 'exfullnav' }, zOut, zoomNo, zIn, pages.length > 1 ? h('span', { class: 'exnavgap' }) : null,
+        ...(pages.length > 1 ? [prevB, pgNo, nextB] : [])));
     const at = e => { const b = fc.getBoundingClientRect(); return [(e.clientX - b.left) / b.width, (e.clientY - b.top) / b.height]; };
     const eraseAt = ([x, y]) => {
       const tol = 0.015, n = (d.ink || []).length;
@@ -3817,7 +3836,7 @@ function examDialog(cls, tab, st, col) {
     // Apple Pencil soll nicht scrollen, der Finger schon; mit dem Finger waagerecht wischen = Blatt wechseln.
     // Der Browser darf hier selbst nichts verschieben (sonst rutscht das Blatt beim Schreiben weg):
     // gescrollt wird nur, wenn ein Finger zieht – von Hand.
-    let sw = null, sy0 = 0, st0 = 0;
+    let sw = null, sy0 = 0, st0 = 0, sx0 = 0, sl0 = 0, pinch = null;
     // Liegt beim Schreiben der Handballen auf, kommt er als Finger an – solange der Stift schreibt oder
     // gerade über dem Bildschirm schwebt (bis 1,5 s danach), wird deshalb nicht mit dem Finger gescrollt.
     const penNear = () => Date.now() - penAt < 1500;
@@ -3827,17 +3846,34 @@ function examDialog(cls, tab, st, col) {
     scroller.addEventListener('touchstart', e => {
       if (e.target.closest('.exhit, .extool')) { sw = null; return; }   // Anmerkung ziehen bzw. ✎/Löschen
       e.preventDefault();
-      if (isPen(e) || e.touches.length !== 1) { sw = null; return; }
-      sw = [e.touches[0].clientX, e.touches[0].clientY]; sy0 = e.touches[0].clientY; st0 = scroller.scrollTop;
+      if (isPen(e)) { sw = null; pinch = null; return; }
+      if (e.touches.length === 2) {   // zwei Finger: vergrößern / verkleinern
+        const [a, b] = e.touches; sw = null;
+        pinch = { d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1, z };
+        return;
+      }
+      if (e.touches.length !== 1) { sw = null; return; }
+      pinch = null;
+      sw = [e.touches[0].clientX, e.touches[0].clientY]; sx0 = sw[0]; sy0 = sw[1]; st0 = scroller.scrollTop; sl0 = scroller.scrollLeft;
     }, { passive: false });
     scroller.addEventListener('touchmove', e => {
       if (e.target.closest('.exhit, .extool')) return;
       e.preventDefault();
-      if (sw && !isPen(e) && e.touches.length === 1) scroller.scrollTop = st0 - (e.touches[0].clientY - sy0);
+      if (isPen(e)) return;
+      if (pinch && e.touches.length === 2) {
+        const [a, b] = e.touches, dd = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        setZ(pinch.z * dd / pinch.d, (a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2);
+        return;
+      }
+      if (sw && e.touches.length === 1) {
+        scroller.scrollTop = st0 - (e.touches[0].clientY - sy0);
+        scroller.scrollLeft = sl0 - (e.touches[0].clientX - sx0);
+      }
     }, { passive: false });
     box.addEventListener('touchmove', e => { if (!e.target.closest('.exfullpg')) e.preventDefault(); }, { passive: false });
     scroller.addEventListener('touchend', e => {
-      if (!sw || !e.changedTouches.length) return;
+      if (e.touches.length < 2) pinch = null;
+      if (!sw || !e.changedTouches.length || z > 1.01) { sw = null; return; }   // vergrößert: waagerecht ziehen verschiebt statt zu blättern
       const dx = e.changedTouches[0].clientX - sw[0], dy = e.changedTouches[0].clientY - sw[1]; sw = null;
       if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.5) show(idx + (dx < 0 ? 1 : -1));
     });
