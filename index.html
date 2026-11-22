@@ -2971,8 +2971,8 @@ function scanViewer(tab, st, col, start, imgs) {
    das Bild selbst bleibt unverändert. */
 const EXAM_KEY = [87, 73, 59, 45, 18];   // Mindestprozent für die Noten 1 bis 5, darunter 6
 const examMax = ex => ex.tasks.reduce((s, t) => s + (+t.max || 0), 0);
-const fmtP = n => String(Math.round(n * 2) / 2).replace('.', ',');
-const numP = s => { const v = parseFloat(String(s).replace(',', '.')); return isFinite(v) ? Math.round(v * 2) / 2 : null; };
+const fmtP = n => String(Math.round(n * 4) / 4).replace('.', ',');
+const numP = s => { const v = parseFloat(String(s).replace(',', '.')); return isFinite(v) ? Math.round(v * 4) / 4 : null; };
 const examCopy = v => JSON.parse(JSON.stringify(v));
 function examData(tab, sid, col) { const c = getCell(tab, sid, col.id + ':p'); return c ? examCopy(c.v) : { p: {}, pos: {} }; }
 function examSum(ex, d) {
@@ -3082,7 +3082,7 @@ async function editExam(tab, col, draft) {
   }).filter(Boolean);
   const scaleBy = (p, rew) => {
     const o = { ...p };
-    for (const id in rew || {}) if (o[id] != null) { const [a, b] = rew[id]; o[id] = a ? Math.round(o[id] * b / a * 2) / 2 : 0; }
+    for (const id in rew || {}) if (o[id] != null) { const [a, b] = rew[id]; o[id] = a ? Math.round(o[id] * b / a * 4) / 4 : 0; }
     return o;
   };
   const ptsOf = () => rawPts().map(p => scaleBy(p, ex._rew));
@@ -3435,7 +3435,7 @@ async function scanBlobUrl(name) {
 }
 
 const EXAM_SYSTEM = `Du hilfst einer Lehrkraft beim Korrigieren einer schriftlichen Klausur. Du bekommst die Aufgabenstellung, den Erwartungshorizont (Aufgaben A1, A2 … mit Höchstpunkten und erwarteter Lösung) und die gescannten Seiten einer handschriftlichen Schülerarbeit.
-- Lies die Handschrift sorgfältig, auch Durchgestrichenes und Randnotizen. Bewerte jede Aufgabe nur nach dem Erwartungshorizont. Punkte in halben Schritten, nie mehr als die Höchstpunkte.
+- Lies die Handschrift sorgfältig, auch Durchgestrichenes und Randnotizen. Bewerte jede Aufgabe nur nach dem Erwartungshorizont. Punkte in Viertel- oder halben Schritten, nie mehr als die Höchstpunkte.
 - Rechenaufgaben: Zwischenschritte zählen. Gib Teilpunkte für jeden richtigen Schritt, auch wenn das Endergebnis falsch ist. Folgefehler: Wer mit einem falschen Zwischenergebnis richtig weiterrechnet, verliert nur beim ersten Fehler Punkte. Stehen im Erwartungshorizont Punkte je Schritt, halte dich genau daran.
 - Begründung je Aufgabe: ein kurzer Satz auf Deutsch – was richtig ist, was fehlt oder falsch ist. Fehlt die Aufgabe, schreib das.
 - „unsicher“ = true, wenn du eine Stelle nicht sicher lesen konntest oder die Bewertung zweifelhaft ist.
@@ -3518,7 +3518,7 @@ function examFromKI(ex, pages, obj) {
   for (const a of obj.aufgaben || []) {
     const m = /(\d+)/.exec(String(a.aufgabe)), t = m && ex.tasks[+m[1] - 1];
     if (!t) continue;
-    k.p[t.id] = Math.max(0, Math.min(t.max, Math.round((+a.punkte || 0) * 2) / 2));
+    k.p[t.id] = Math.max(0, Math.min(t.max, Math.round((+a.punkte || 0) * 4) / 4));
     k.w[t.id] = String(a.begruendung || ''); k.u[t.id] = !!a.unsicher;
     const pl = place(a.ort); if (pl) k.pos[t.id] = pl;
   }
@@ -4185,7 +4185,7 @@ async function importCorrection(j, progress) {
       const all = scanPages(tab, st.id, col.id).map(p => p.key);
       const place = o => { const i = (+o.seite || 1) - 1, k = keys[i] || all[i]; return k ? { pg: k, x: Math.max(0.02, Math.min(0.95, +o.x || 0.85)), y: Math.max(0.02, Math.min(0.95, +o.y || 0.1)) } : null; };
       const k = { p: {}, w: s.k.w || {}, u: s.k.u || {}, g: String(s.k.g || ''), pos: {}, at: nowIso(), von: 'Claude' };
-      for (const t of col.exam.tasks) { const v = (s.k.p || {})[t.id]; if (v != null) k.p[t.id] = Math.max(0, Math.min(t.max, Math.round(+v * 2) / 2)); }
+      for (const t of col.exam.tasks) { const v = (s.k.p || {})[t.id]; if (v != null) k.p[t.id] = Math.max(0, Math.min(t.max, Math.round(+v * 4) / 4)); }
       for (const [id, o] of Object.entries(s.k.pos || {})) { const q = place(o); if (q) k.pos[id] = q; }
       // Haken / f / ff je Teilantwort: { seite, x, y, t: 'r' (richtig) | 'f' (falsch) | 'ff' (Folgefehler), richtig?: Text daneben }
       k.m = (s.k.m || []).map(e => { const q = place(e); return q && Object.assign({ pg: q.pg, x: q.x, y: q.y, t: ['f', 'ff', 'q'].includes(e.t) ? e.t : 'r' }, e.richtig ? { c: String(e.richtig) } : {}); }).filter(Boolean);
