@@ -405,6 +405,11 @@ dialog.dlg::-webkit-scrollbar, .exleft::-webkit-scrollbar, .exright::-webkit-scr
 .exfullpg::-webkit-scrollbar { display: none; }
 .exfullwrap { max-width: 1100px; margin: 0 auto; }
 .exzoomno { min-width: 52px; text-align: center; }
+.exfulltools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 14px; border-bottom: 1px solid var(--line); }
+.exinks { display: flex; gap: 8px; margin-left: 6px; }
+.exink { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--line); padding: 0; }
+.exink.on { box-shadow: 0 0 0 2px var(--ink); }
+.exlvdef { border-left: 3px solid var(--line); padding-left: 10px; margin: 6px 0; }
 .mknote { white-space: pre-wrap; font-size: 14px; line-height: 1.45; padding: 6px 0; }
 .mkbtns { flex-wrap: wrap; }
 .exnavgap { width: 28px; }
@@ -2106,14 +2111,14 @@ async function editColumn(tab, col, view) {
     { label: isNew ? 'Anlegen' : 'Speichern', primary: true, fn: () => (name.value.trim() && +factor.value > 0) ? 'ok' : KEEP }
   ];
   if (!isNew) actions.unshift({ label: 'Leistung löschen', cls: 'danger left', value: 'del' });
+  if (!isNew) actions.unshift({ label: 'Überprüfung erstellen', value: 'mk' });   // steht über „Leistung löschen“
   if (!isNew && col.exam) actions.push({ label: 'Erwartungshorizont bearbeiten', value: 'exam' });
-  if (!isNew) actions.push({ label: 'Überprüfung erstellen', value: 'mk' });
   const r = await dlg(isNew ? 'Neue Leistung' : 'Leistung bearbeiten',
     h('div', {}, field('Bezeichnung', name),
       field('Zählt zu (z. B. ein Referat zu den Klassenarbeiten)', cat),
       h('label', { class: 'switchrow' }, h('span', {}, 'Unterschrift abhaken', h('small', {}, 'Je Schüler einen Haken setzen, sobald die Unterschrift vorliegt')), sign),
       h('label', { class: 'switchrow' }, h('span', {}, 'Scans ablegen', h('small', {}, 'Je Schüler die fotografierte Arbeit ablegen (liegt in deinem OneDrive)')), scan),
-      h('label', { class: 'switchrow' }, h('span', {}, 'Mit Punkten korrigieren', h('small', {}, 'Erwartungshorizont mit Aufgaben und Punkten, Note nach Notenschlüssel; die KI kann die Scans vorab prüfen')), exam),
+      h('label', { class: 'switchrow' }, h('span', {}, 'Leistung korrigieren', h('small', {}, 'Erwartungshorizont mit Aufgaben und Punkten, Note nach Notenschlüssel; die KI kann die Scans vorab prüfen')), exam),
       field('Halbjahr', half),
       field('Gewichtung innerhalb des Bereichs (z. B. 2 = zählt doppelt)', factor)), actions);
   if (!r) return;
@@ -3093,12 +3098,12 @@ async function editExam(tab, col, draft) {
       ex.tasks.forEach(t => { delete t.lmax; delete t.lauto; });
       autoL(); drawDiff(); draw();
     } }, [1, 2, 3].map(k => h('option', { value: k, selected: k === n }, k === 1 ? 'nicht differenziert' : k + ' Stufen')));
-    diffBox.replaceChildren(h('div', { class: 'exrow' }, h('span', { class: 'grow' }, 'Schwierigkeitsstufen'), sel),
-      ...(L ? L.map((lv, i) => h('div', { class: 'exrow' },
-        h('input', { type: 'text', value: lv.name, 'aria-label': 'Name der Stufe', oninput: e => { lv.name = e.target.value; }, onchange: () => draw() }),
-        h('span', { class: 'hint' }, 'nur diese Stufe: höchstens Note'),
-        i === L.length - 1 ? h('b', {}, '1') : h('select', { 'aria-label': 'Beste Note ' + lv.name, onchange: e => { lv.best = e.target.value; autoL(); draw(); } },
-          GRADES.map(g => h('option', { value: g, selected: g === lv.best }, g.replace('-', '−')))))) : []),
+    // Untereinander statt nebeneinander, damit es auch auf dem iPhone lesbar bleibt
+    diffBox.replaceChildren(field('Schwierigkeitsstufen', sel),
+      ...(L ? L.map((lv, i) => h('div', { class: 'exlvdef' },
+        field('Stufe ' + (i + 1) + ' – Name', h('input', { type: 'text', value: lv.name, oninput: e => { lv.name = e.target.value; }, onchange: () => draw() })),
+        i === L.length - 1 ? h('p', { class: 'hint' }, 'Nur diese Stufe: bis Note 1') : field('Nur diese Stufe: höchstens Note', h('select', { onchange: e => { lv.best = e.target.value; autoL(); draw(); } },
+          GRADES.map(g => h('option', { value: g, selected: g === lv.best }, g.replace('-', '−'))))))) : []),
       L ? h('p', { class: 'hint' }, 'Die Höchstpunkte der leichteren Stufen werden aus der Note vorgeschlagen und lassen sich je Aufgabe ändern. Die Note bezieht sich immer auf die volle Punktzahl der schwersten Stufe.') : null);
   };
   autoL(); drawDiff(); draw();
@@ -3501,7 +3506,8 @@ function examStamp(cv, ex, d, pageKey, grade) {
   // Mit dem Stift frei geschrieben (Vollbild): Striche als Anteil der Seite.
   if (!hide.ink) (d.ink || []).forEach(k => {
     if (k.pg !== pageKey || !k.s || k.s.length < 2) return;
-    ctx.save(); ctx.strokeStyle = HAND_INK; ctx.lineCap = ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(1.5, (k.w || 0.0022) * cv.height);
+    ctx.save(); ctx.strokeStyle = k.c || HAND_INK; ctx.lineCap = ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(1.5, (k.w || 0.0022) * cv.height);
+    if (k.a) { ctx.globalAlpha = k.a; ctx.globalCompositeOperation = 'multiply'; }   // Textmarker: durchscheinend, Schrift bleibt lesbar
     ctx.beginPath(); ctx.moveTo(k.s[0] * cv.width, k.s[1] * cv.height);
     for (let j = 2; j < k.s.length; j += 2) ctx.lineTo(k.s[j] * cv.width, k.s[j + 1] * cv.height);
     if (k.s.length === 2) ctx.lineTo(k.s[0] * cv.width + 0.5, k.s[1] * cv.height);
@@ -3514,10 +3520,11 @@ function examStamp(cv, ex, d, pageKey, grade) {
     const x0 = e.x * cv.width, x1 = (e.x + (e.w || 0.12)) * cv.width, y = e.y * cv.height, hh = Math.max(14, (e.h || 0.02) * cv.height);
     const wob = n => (((i + 3) * 9301 + n * 49297) % 233280) / 233280 - 0.5;
     ctx.save(); ctx.strokeStyle = HAND_INK; ctx.lineWidth = Math.max(2.5, size * 0.06); ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(x0, y + hh * 0.15 + wob(1) * 4);
-    ctx.quadraticCurveTo((x0 + x1) / 2, y + hh * 0.25 + wob(2) * 6, x1, y + hh * 0.12 + wob(3) * 4);
+    // Unterstrich knapp unter der Grundlinie, Berichtigung dicht über dem Wort und etwas kleiner (sonst ragt sie in die Zeile darüber)
+    ctx.beginPath(); ctx.moveTo(x0, y + hh * 0.1 + wob(1) * 2);
+    ctx.quadraticCurveTo((x0 + x1) / 2, y + hh * 0.16 + wob(2) * 3, x1, y + hh * 0.08 + wob(3) * 2);
     ctx.stroke(); ctx.restore();
-    if (e.c) handText(ctx, e.c, x0, y - hh * 1.05, Math.max(26, hh * 1.25), 50 + i);
+    if (e.c) handText(ctx, e.c, x0, y - hh * 0.98, Math.max(18, hh * 0.85), 50 + i);
   });
   const sp = (d.pos || {}).sum, sum = examSum(ex, d);
   if (sp && sp.pg === pageKey && sum != null) {
@@ -3895,10 +3902,17 @@ function examDialog(cls, tab, st, col) {
     };
     let drawHits = () => {};
     fc.paint = () => { paintOnly(); drawHits(); syncB(); };
-    const penB = h('button', { type: 'button', class: 'expin on active' }, '✎ Stift');
-    const eraB = h('button', { type: 'button', class: 'expin on' }, 'Radierer');
-    const setMode = m => { mode = m; penB.classList.toggle('active', m === 'pen'); eraB.classList.toggle('active', m === 'erase'); };
-    penB.onclick = () => setMode('pen'); eraB.onclick = () => setMode('erase');
+    // Werkzeuge wie in der Markup-Ansicht: Stift, Fineliner, Textmarker, Wort unterstreichen (Rechtschreibung), Radierer; dazu Farben.
+    const TOOLS = [['pen', '✎ Stift'], ['fine', 'Fein'], ['marker', 'Marker'], ['under', 'U̲ Wort'], ['erase', 'Radierer']];
+    const INKS = [['#c8102e', 'Rot'], ['#1b7f3b', 'Grün'], ['#1d4ed8', 'Blau'], ['#222222', 'Schwarz'], ['#ffd400', 'Gelb']];
+    let ink = '#c8102e', markInk = '#ffd400';
+    const toolBtns = TOOLS.map(([m, lab]) => h('button', { type: 'button', class: 'expin on' + (m === mode ? ' active' : ''), onclick: () => setMode(m) }, lab));
+    const inkBtns = INKS.map(([c, lab]) => h('button', { type: 'button', class: 'exink', title: lab, 'aria-label': 'Farbe ' + lab, style: 'background:' + c,
+      onclick: () => { if (mode === 'marker') markInk = c; else ink = c; drawInks(); } }));
+    const drawInks = () => inkBtns.forEach((b, i) => b.classList.toggle('on', INKS[i][0] === (mode === 'marker' ? markInk : ink)));
+    const setMode = m => { mode = m; toolBtns.forEach((b, i) => b.classList.toggle('active', TOOLS[i][0] === m)); drawInks(); };
+    const penB = h('div', { class: 'exfulltools' }, ...toolBtns, h('span', { class: 'exinks' }, ...inkBtns)), eraB = null;
+    drawInks();
     const fu = iconBtn('undo', 'Letzte Änderung rückgängig', () => { undo(); fc.paint(); });
     const fr = iconBtn('redo', 'Wiederherstellen', () => { redo(); fc.paint(); });
     const syncB = () => { fu.disabled = !hist.length; fr.disabled = !fut.length; };
@@ -3932,8 +3946,9 @@ function examDialog(cls, tab, st, col) {
     const zIn = h('button', { type: 'button', class: 'expin on', title: 'Vergrößern', onclick: () => setZ(z * 1.25) }, '+');
     scroller.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); setZ(z * Math.exp(-e.deltaY / 300), e.clientX, e.clientY); }, { passive: false });
     const box = h('div', { class: 'exfull' },
-      h('div', { class: 'exfullbar' }, h('div', { class: 'exfl' }, iconBtn('close', 'Vollbild schließen', close), penB, eraB),
+      h('div', { class: 'exfullbar' }, h('div', { class: 'exfl' }, iconBtn('close', 'Vollbild schließen', close)),
         h('div', { class: 'exfc' }, fu, fr), h('div', {})),
+      penB,
       scroller,
       h('div', { class: 'exfullnav' }, zOut, zoomNo, zIn, pages.length > 1 ? h('span', { class: 'exnavgap' }) : null,
         ...(pages.length > 1 ? [prevB, pgNo, nextB] : [])));
@@ -3987,9 +4002,10 @@ function examDialog(cls, tab, st, col) {
       const dx = e.changedTouches[0].clientX - sw[0], dy = e.changedTouches[0].clientY - sw[1]; sw = null;
       if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.5) show(idx + (dx < 0 ? 1 : -1));
     });
-    const seg = (px, py, x, y, w) => {   // nur das neue Stück zeichnen, das ganze Blatt erst am Ende
+    const seg = (px, py, x, y, w, c, a) => {   // nur das neue Stück zeichnen, das ganze Blatt erst am Ende
       const ctx = fc.getContext('2d');
-      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.strokeStyle = HAND_INK; ctx.lineCap = 'round'; ctx.lineWidth = Math.max(1.5, w * fc.height);
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.strokeStyle = c || HAND_INK; ctx.globalAlpha = a || 1; if (a) ctx.globalCompositeOperation = 'multiply';
+      ctx.lineCap = 'round'; ctx.lineWidth = Math.max(1.5, w * fc.height);
       ctx.beginPath(); ctx.moveTo(px * fc.width, py * fc.height); ctx.lineTo(x * fc.width, y * fc.height); ctx.stroke(); ctx.restore();
     };
     fc.addEventListener('pointerdown', e => {
@@ -3998,9 +4014,11 @@ function examDialog(cls, tab, st, col) {
       if (sel) { sel = null; drawHits(); }
       const pt = at(e);
       if (mode === 'erase') { cur = 'erase'; eraseAt(pt); return; }
-      cur = { pg: pk(), w: 0.0028, s: [+pt[0].toFixed(4), +pt[1].toFixed(4)] };
+      if (mode === 'under') { cur = { under: true, s: [pt[0], pt[1]] }; return; }   // Strich unter ein Wort → Rechtschreibfehler
+      cur = { pg: pk(), w: mode === 'fine' ? 0.0016 : mode === 'marker' ? 0.014 : 0.0028, s: [+pt[0].toFixed(4), +pt[1].toFixed(4)] };
+      if (mode === 'marker') { cur.c = markInk; cur.a = 0.35; } else if (ink !== HAND_INK) cur.c = ink;
       d.ink = d.ink || []; d.ink.push(cur);
-      seg(pt[0], pt[1], pt[0] + 0.0005, pt[1], cur.w);
+      seg(pt[0], pt[1], pt[0] + 0.0005, pt[1], cur.w, cur.c, cur.a);
     });
     fc.addEventListener('pointermove', e => {
       if (!cur) return;
@@ -4010,14 +4028,25 @@ function examDialog(cls, tab, st, col) {
         if (cur === 'erase') { eraseAt(pt); continue; }
         const n = cur.s.length, px = cur.s[n - 2], py = cur.s[n - 1];
         if (Math.hypot((pt[0] - px) * fc.width / fc.height, pt[1] - py) < 0.0008) continue;
-        seg(px, py, pt[0], pt[1], cur.w);
+        if (cur.under) { seg(px, py, pt[0], pt[1], 0.002, HAND_INK); cur.s.push(pt[0], pt[1]); continue; }
+        seg(px, py, pt[0], pt[1], cur.w, cur.c, cur.a);
         cur.s.push(+pt[0].toFixed(4), +pt[1].toFixed(4));
       }
     });
-    const up = () => {
+    const up = async () => {
       if (!cur) return;
       const was = cur; cur = null;
       if (was === 'erase') { if (erased) { erased = false; store(); syncB(); } return; }
+      if (was.under) {   // Wort unterstrichen: Berichtigung eintippen, sie erscheint in der eigenen Handschrift darüber
+        const xs = was.s.filter((v, i) => i % 2 === 0), ys = was.s.filter((v, i) => i % 2 === 1);
+        const x0 = Math.min(...xs), x1 = Math.max(...xs), yl = ys.reduce((a, b) => a + b, 0) / ys.length;
+        if (x1 - x0 < 0.01) { fc.paint(); return; }
+        const c = await askText('Rechtschreibung', 'Richtige Schreibweise (wird in Ihrer Handschrift darübergeschrieben)', '', 'Übernehmen');
+        if (c == null) { fc.paint(); return; }
+        const hh = 0.02;
+        d.r.push({ id: uid(), pg: pk(), x: +x0.toFixed(4), y: +(yl - hh * 0.12).toFixed(4), w: +(x1 - x0).toFixed(4), h: hh, f: '', c: c.trim(), own: true });
+        store(); fc.paint(); return;
+      }
       store(); fc.paint();
     };
     fc.addEventListener('pointerup', up); fc.addEventListener('pointercancel', up);
@@ -4265,11 +4294,12 @@ async function mkDialog(tab, col) {
   const diffBox = h('div', {});
   const drawDiff = () => {
     const L = mk.stufen, n = L ? L.length : 1;
+    // Beschriftung über der Auswahl (auf dem iPhone sonst zu schmal)
     diffBox.replaceChildren(
-      h('div', { class: 'exrow' }, h('span', { class: 'grow' }, 'Schwierigkeitsstufen'),
+      field('Schwierigkeitsstufen',
         h('select', { 'aria-label': 'Stufen', onchange: e => { const k = +e.target.value; mk.stufen = k > 1 ? examCopy(EXAM_LEVEL_DEFAULT[k]).map((l, i, a) => Object.assign(l, { farbe: k === 2 ? ['orange', 'grün'][i] : ['orange', 'gelb', 'grün'][i] })) : null; touch(); drawDiff(); } },
           [1, 2, 3].map(k => h('option', { value: k, selected: k === n }, k === 1 ? 'nicht differenziert' : k + ' Stufen')))),
-      ...(L ? L.slice(0, -1).map(lv => h('div', { class: 'exrow' }, h('span', { class: 'grow' }, 'nur ' + lv.name + ' („' + (lv.farbe || '') + '“): höchstens Note'),
+      ...(L ? L.slice(0, -1).map(lv => field('Nur „' + lv.name + '“ (' + (lv.farbe || '') + '): höchstens Note',
         h('select', { onchange: e => { lv.best = e.target.value; touch(); } }, GR.map(g => h('option', { value: g, selected: g === lv.best }, g.replace('-', '−')))))) : []));
   };
   drawDiff();
@@ -4361,7 +4391,8 @@ async function mkDialog(tab, col) {
     matBox,
     h('h3', { class: 'sec low' }, 'Angaben'),
     field('Titel in der Kopfzeile', inTitel), field('Thema', inThema),
-    h('div', { class: 'exrow' }, field('Dauer', inDauer), field('Gesamtpunkte', inPunkte)),
+    h('div', { class: 'exrow' }, field('Dauer', inDauer), field('Gesamtpunkte (freiwillig)', inPunkte)),
+    h('p', { class: 'hint' }, 'Gesamtpunkte nur angeben, wenn eine bestimmte Punktzahl gewünscht ist. Sonst richtet Claude die Punkte nach der Dauer (etwa 1–1,5 Punkte je Minute).'),
     diffBox, field('Wünsche', inWunsch),
     h('div', { class: 'exrow' }, bMake), msg,
     h('h3', { class: 'sec low' }, 'Fassungen'), fileMsg, fileBox,
@@ -4415,7 +4446,7 @@ async function fetchCorrections(cls, tab) {
       try { const k = await orderCorrection(cls, tab, col); st.textContent = k + ' Arbeiten übergeben. Claude korrigiert am Laptop; danach hier unten „Holen“.'; btn.textContent = '✓'; }
       catch (e) { st.textContent = e.message; btn.disabled = false; }
     });
-    return h('div', { class: 'exrow inboxrow' }, h('span', { class: 'grow' }, h('b', {}, col.name), h('br'), col.exam ? st : h('span', { class: 'hint' }, 'Zuerst in der Leistung „Mit Punkten korrigieren“ einschalten und die Musterlösung ablegen.')), btn);
+    return h('div', { class: 'exrow inboxrow' }, h('span', { class: 'grow' }, h('b', {}, col.name), h('br'), col.exam ? st : h('span', { class: 'hint' }, 'Zuerst in der Leistung „Leistung korrigieren“ einschalten und die Musterlösung ablegen.')), btn);
   }) : h('p', { class: 'hint' }, 'In diesem Fach hat noch keine Leistung „Scans ablegen“.'));
   // Unten: geholte Vorschläge einer Leistung auf einmal übernehmen (Punkte und Noten).
   const acceptBox = h('div', {});
