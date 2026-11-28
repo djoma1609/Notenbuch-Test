@@ -310,6 +310,8 @@ button:disabled { opacity: .35; cursor: default; }
 @media (max-width: 560px) { .wide { display: none; } .narrow { display: inline; } ul.students li button.small { min-width: 34px; padding-left: 8px; padding-right: 8px; } ul.students li { gap: 6px; padding: 8px; } }
 
 dialog.dlg { border: none; border-radius: 20px; background: var(--panel); color: var(--ink); padding: 22px; width: min(520px, calc(100vw - 32px)); box-shadow: 0 20px 60px rgba(0, 0, 0, .3); }
+/* Bildschirmtastatur offen (iPhone/iPad): Fenster in den sichtbaren Bereich über der Tastatur rücken */
+html.kb dialog.dlg { inset: var(--vvt, 0px) 0 auto 0; margin: 8px auto 0; max-height: calc(var(--vvh, 100vh) - 16px); overflow: auto; }
 dialog.dlg::backdrop { background: rgba(30, 25, 15, .45); }
 dialog.dlg .dlg-head { display: flex; align-items: center; gap: 10px; margin: -6px -6px 16px; }
 dialog.dlg .dlg-head h2 { flex: 1; margin: 0; font-size: 17px; text-align: center; overflow-wrap: anywhere; }
@@ -687,6 +689,18 @@ const KEEP = Symbol('keep');
    nicht als eigenes Fenster geöffnet, sondern an dieser Stelle eingebettet. */
 let dlgHost = null;
 const inlineCancels = new Set();
+// Bildschirmtastatur erkennen: Der sichtbare Bereich wird deutlich kleiner als das Fenster. Dann rücken offene Fenster
+// nach oben in den freien Teil (html.kb), und das Eingabefeld bleibt sichtbar.
+if (window.visualViewport) {
+  const vvFit = () => {
+    const vv = window.visualViewport, kb = window.innerHeight - vv.height > 120;
+    document.documentElement.classList.toggle('kb', kb);
+    document.documentElement.style.setProperty('--vvh', vv.height + 'px');
+    document.documentElement.style.setProperty('--vvt', vv.offsetTop + 'px');
+    if (kb) { const a = document.activeElement; if (a && a.closest && a.closest('dialog.dlg')) setTimeout(() => a.scrollIntoView({ block: 'nearest' }), 50); }
+  };
+  visualViewport.addEventListener('resize', vvFit); visualViewport.addEventListener('scroll', vvFit);
+}
 function dlg(title, content, actions) {
   return new Promise(resolve => {
     const host = dlgHost; dlgHost = null;
