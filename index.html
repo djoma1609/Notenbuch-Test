@@ -1301,6 +1301,7 @@ function renderDrawer() {
     ...(cls ? act(cls.name + ' löschen', () => deleteClass(cls), true) : []),
     sec('Allgemein'),
     ...act('Name in der Begrüßung', editName),
+    ...act('Meine Handschrift', handDialog),   // Schriftprobe für Punkte, Haken und Berichtigungen auf den Scans
     ...act('Sicherung', backupDialog),
     ...act('Automatischer Abgleich', syncDialog, false, syncBtn),
     sec('Darstellung der Leiste'),
@@ -2077,7 +2078,11 @@ function renderGrades(panel, cls, tab) {
           if (next) { next.focus(); next.select(); } else inp.blur();
         });
         // Durch neuen Notenschlüssel bzw. neue Gewichtung betroffen: rot umkreist, bis die Note angefasst wird
-        if (col.chg && col.chg.s && col.chg.s[st.id]) { inp.classList.add('chg'); inp.title = 'Neuer Schlüssel bzw. neue Gewichtung: ' + col.chg.s[st.id]; }
+        if (col.chg && col.chg.s && col.chg.s[st.id]) {
+          const ng = String(col.chg.s[st.id]).split('→').pop().trim();
+          if (c && String(c.v) === ng) { delete col.chg.s[st.id]; col.m = nowIso(); }   // neue Note ist übernommen: Kreis weg
+          else { inp.classList.add('chg'); inp.title = 'Neuer Schlüssel bzw. neue Gewichtung: ' + col.chg.s[st.id]; }
+        }
         // Unterschrift je Schüler abhaken (nur wenn für diese Leistung eingeschaltet).
         // Gespeichert als eigene Zelle „<Spalte>:s“, damit die Note selbst nicht als geändert gilt.
         let sig = null, sigTs = null;
