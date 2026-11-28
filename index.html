@@ -310,6 +310,14 @@ button:disabled { opacity: .35; cursor: default; }
 @media (max-width: 560px) { .wide { display: none; } .narrow { display: inline; } ul.students li button.small { min-width: 34px; padding-left: 8px; padding-right: 8px; } ul.students li { gap: 6px; padding: 8px; } }
 
 dialog.dlg { border: none; border-radius: 20px; background: var(--panel); color: var(--ink); padding: 22px; width: min(520px, calc(100vw - 32px)); box-shadow: 0 20px 60px rgba(0, 0, 0, .3); }
+dialog.dlg.handdlg { width: min(900px, calc(100vw - 16px)); max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); }
+@media (max-width: 480px) {   /* iPhone: drei Schreibfelder je Zeichen nebeneinander */
+  dialog.dlg.handdlg { padding: 16px 12px; }
+  .handdlg canvas.handpad { width: 64px !important; height: 64px !important; }
+  .handdlg .handrow { gap: 4px; flex-wrap: nowrap; }
+  .handdlg .handrow b { width: 1.8em; }
+  .handdlg .handcell .iconbtn { width: 24px; height: 24px; }
+}
 /* Bildschirmtastatur offen (iPhone/iPad): Fenster in den sichtbaren Bereich über der Tastatur rücken */
 html.kb dialog.dlg { inset: var(--vvt, 0px) 0 auto 0; margin: 8px auto 0; max-height: calc(var(--vvh, 100vh) - 16px); overflow: auto; }
 dialog.dlg::backdrop { background: rgba(30, 25, 15, .45); }
@@ -1315,7 +1323,8 @@ function renderDrawer() {
     ...(cls ? act(cls.name + ' löschen', () => deleteClass(cls), true) : []),
     sec('Allgemein'),
     ...act('Name in der Begrüßung', editName),
-    ...act('Meine Handschrift', handDialog),   // Schriftprobe für Punkte, Haken und Berichtigungen auf den Scans
+    // Schriftprobe für Punkte, Haken und Berichtigungen: in einer eigenen, großen Ansicht statt in der schmalen Leiste
+    h('button', { type: 'button', class: 'row', onclick: () => { toggleDrawer(false); handDialog(); } }, 'Meine Handschrift'),
     ...act('Sicherung', backupDialog),
     ...act('Automatischer Abgleich', syncDialog, false, syncBtn),
     sec('Darstellung der Leiste'),
@@ -3529,10 +3538,13 @@ async function handDialog() {
     return h('details', { class: 'handset', open: gi === 0 && done(set) < set.chars.length }, sum, h('div', { class: 'handgrid' }, rows));
   });
   showPrev();
-  const r = await dlg('Meine Handschrift', h('div', { class: 'handbox' },
+  const hbox = h('div', { class: 'handbox' },
     h('p', { class: 'hint' }, 'Jedes Zeichen so schreiben, wie Sie auf dem Blatt korrigieren (mit Stift oder Finger). Die gestrichelte Linie ist die Grundlinie; g, j, p, q, y reichen darunter. Mehrere Varianten wirken natürlicher. Die Buchstaben braucht das Notenbuch, um berichtigte Wörter über Rechtschreibfehler zu schreiben.'),
     groups,
-    h('h3', { class: 'sec low' }, 'Vorschau'), prev), [{ label: 'Abbrechen', value: null }, { label: 'Speichern', primary: true, fn: () => 'ok' }]);
+    h('h3', { class: 'sec low' }, 'Vorschau'), prev);
+  const rp = dlg('Meine Handschrift', hbox, [{ label: 'Abbrechen', value: null }, { label: 'Speichern', primary: true, fn: () => 'ok' }]);
+  { const hd = hbox.closest('dialog'); if (hd) hd.classList.add('handdlg'); }   // eigene, große Ansicht
+  const r = await rp;
   if (r !== 'ok') return;
   const g = {};
   HAND_CHARS.forEach(ch => { const v = work[ch].filter(Boolean); if (v.length) g[ch] = v; });
