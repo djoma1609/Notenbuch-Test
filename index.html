@@ -204,6 +204,8 @@ button.pts.on { background: var(--soft); border: 1.5px solid var(--accent); colo
 button.pts.ki { border-style: solid; color: var(--accent); }
 button.pts.prop { color: #c8102e; border: 2px solid #c8102e; border-radius: 999px; background: #fff; }
 td.cell input.grade.prop:placeholder-shown { border: 2px solid #c8102e; border-radius: 999px; background: #fff; }
+td.cell input.grade.chg { outline: 2.5px solid #c8102e; outline-offset: 3px; border-radius: 999px; }
+.exafflist { margin: 4px 0 8px 18px; padding: 0; font-size: 14px; line-height: 1.5; }
 td.cell input.grade.prop::placeholder { color: #c8102e; opacity: 1; font-weight: 700; }
 td.cell.check { background: #fff1b8; }
 .masked td.cell input.grade::placeholder { color: transparent !important; }
@@ -2063,6 +2065,7 @@ function renderGrades(panel, cls, tab) {
           const n = setCell(tab, st.id, col.id, v);
           inp.value = v;
           inp.classList.remove('bad'); inp.dataset.g = v[0] || '';
+          if (col.chg && col.chg.s && col.chg.s[st.id]) { delete col.chg.s[st.id]; col.m = nowIso(); inp.classList.remove('chg'); }   // angefasst: Kreis weg
           ts.textContent = tsText(n); inp.title = tsTitle(n);
           save(); refresh(); refreshFoot();
         });
@@ -2073,6 +2076,8 @@ function renderGrades(panel, cls, tab) {
           const next = list[list.indexOf(inp) + 1];
           if (next) { next.focus(); next.select(); } else inp.blur();
         });
+        // Durch neuen Notenschlüssel bzw. neue Gewichtung betroffen: rot umkreist, bis die Note angefasst wird
+        if (col.chg && col.chg.s && col.chg.s[st.id]) { inp.classList.add('chg'); inp.title = 'Neuer Schlüssel bzw. neue Gewichtung: ' + col.chg.s[st.id]; }
         // Unterschrift je Schüler abhaken (nur wenn für diese Leistung eingeschaltet).
         // Gespeichert als eigene Zelle „<Spalte>:s“, damit die Note selbst nicht als geändert gilt.
         let sig = null, sigTs = null;
@@ -3232,7 +3237,28 @@ async function editExam(tab, col, draft) {
     k.addEventListener('input', () => { const v = numP(k.value); if (v != null) s.value = String(v); showSpiegel(); });
     return s;
   });
+  // Welche Arbeiten ändern ihre Note durch den neuen Schlüssel bzw. die neue Gewichtung? (Vergleich mit dem Stand beim Öffnen)
+  const exOpen = col.exam ? examCopy(col.exam) : null;
+  const key0 = (ex.key || EXAM_KEY).slice(), tend0 = !!ex.tend;
+  const affBox = h('div', { class: 'exaff' });
+  const affected = () => {
+    if (!exOpen || !cls) return [];
+    const exNew = { tasks: ex.tasks, key: readKey(), tend: tend.checked };
+    return cls.students.map(st => {
+      const d = examData(tab, st.id, col), k = (getCell(tab, st.id, col.id + ':k') || {}).v;
+      const p = d.p && Object.keys(d.p).length ? d.p : k ? k.p : null; if (!p) return null;
+      const og = examGrade(exOpen, examSum(exOpen, { p })), ng = examGrade(exNew, examSum(exNew, { p: scaleBy(p, ex._rew) }));
+      const cell = getCell(tab, st.id, col.id);
+      return og !== ng ? { st, og, ng, entered: cell ? String(cell.v) : null } : null;
+    }).filter(Boolean);
+  };
+  const drawAff = () => {
+    const a = affected();
+    affBox.replaceChildren(...(a.length ? [h('p', { class: 'hint' }, 'Betroffen: ' + a.length + (a.length === 1 ? ' Arbeit' : ' Arbeiten') + ' – nach dem Speichern in der Übersicht rot umkreist:'),
+      h('ul', { class: 'exafflist' }, a.map(x => h('li', {}, x.st.name + ': ' + x.og + ' → ' + x.ng + (x.entered && x.entered !== x.og ? ' (eingetragen: ' + x.entered + ')' : ''))))] : []));
+  };
   const showSpiegel = () => {
+    drawAff();
     const key = readKey(), max = examMax(ex), sp = spiegelOf(key);
     if (examLevels(ex)) { autoL(); drawLv(); sumUp(); }   // leichtere Stufen folgen dem Schlüssel
     key.forEach((v, i) => { ptsHint[i].textContent = max ? 'ab ' + fmtP(Math.ceil(v * max / 100 * 2) / 2) + ' P.' : ''; });
@@ -3343,7 +3369,12 @@ async function editExam(tab, col, draft) {
     h('p', { class: 'hint' }, 'Darunter: Note 6.'),
     h('label', { class: 'switchrow' }, h('span', {}, 'Mit + und −', h('small', {}, 'Oberes Drittel einer Notenstufe „+“, unteres Drittel „−“')), tend),
     h('h3', { class: 'sec low' }, 'Notenspiegel'), spiegel,
-    h('div', { class: 'exgoal' }, goalType, goalVal, h('button', { type: 'button', onclick: suggest }, isKA ? 'Aufgaben neu gewichten' : 'Schlüssel vorschlagen')), goalMsg,
+    h('div', { class: 'exgoal' }, goalType, goalVal, h('div', { class: 'exrow' }, h('button', { type: 'button', onclick: suggest }, isKA ? 'Aufgaben neu gewichten' : 'Schlüssel vorschlagen'),
+      h('button', { type: 'button', onclick: () => {   // zurück auf den Stand beim Öffnen
+        if (isKA) { ex.tasks.forEach(t => { if (ex._rew && ex._rew[t.id]) t.max = ex._rew[t.id][0]; }); delete ex._rew; if (examLevels(ex)) autoL(); draw(); }
+        else { key0.forEach((v, i) => { keyIns[i].value = fmtP(v); sliders[i].value = String(v); }); tend.checked = tend0; }
+        showSpiegel(); goalMsg.textContent = isKA ? 'Gewichtung zurückgesetzt.' : 'Schlüssel zurückgesetzt.';
+      } }, 'Zurücksetzen'))), goalMsg, affBox,
     h('p', { class: 'hint' }, isKA
       ? 'Bei Klassenarbeiten bleibt der Notenschlüssel fest. Stattdessen werden die Höchstpunkte der Aufgaben verschoben (zuerst bei gleichen Gesamtpunkten, nur wenn nötig ändern sich auch diese etwas) und die Punkte der Schüler anteilig umgerechnet. Eingetragene Noten ändern sich nur mit „Speichern und Noten neu berechnen“.'
       : 'Die Punkte der Schüler bleiben gleich, nur die Notengrenzen verschieben sich. Eingetragene Noten ändern sich nur mit „Speichern und Noten neu berechnen“.')), actions);
@@ -3370,6 +3401,9 @@ async function editExam(tab, col, draft) {
     });
     const keep = ex.sol.map(s => s.name);
     scanForget(before.concat(ex._added).filter(n => !keep.includes(n)));
+    // Betroffene Arbeiten merken: Sie werden in der Übersicht rot umkreist, bis die Note dort angefasst wird.
+    const aff = affected();
+    if (aff.length) col.chg = { at: nowIso(), s: Object.fromEntries(aff.map(x => [x.st.id, x.og + ' → ' + x.ng])) };
     const oldExam = col.exam ? examCopy(col.exam) : null;
     // alte Noten vor dem Umrechnen merken; dann die Punkte aller Schüler auf die neue Gewichtung umrechnen
     const oldG = new Map();
